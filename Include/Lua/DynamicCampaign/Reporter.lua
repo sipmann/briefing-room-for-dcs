@@ -19,6 +19,7 @@ briefingRoom.dynamicCampaign.stockLabels = { $STOCKLABELS$ }
 briefingRoom.dynamicCampaign.stockWarning = "$STOCKWARNING$"
 briefingRoom.dynamicCampaign.stockWarned = false
 briefingRoom.dynamicCampaign.tookOff = { }
+briefingRoom.dynamicCampaign.endMissionLabel = "$ENDMISSIONLABEL$"
 
 local function brdcSafeName(object)
   if object == nil then return nil end
@@ -212,6 +213,11 @@ function briefingRoom.dynamicCampaign.start()
   if okPlayers and players ~= nil then
     for _, unit in ipairs(players) do brdcTrackFlight(unit, false) end
   end
+
+  -- End mission available at any time (the result is reported when the mission ends),
+  -- instead of the root menu command added only when every objective is complete
+  briefingRoom.mission.commandEnd = false
+  missionCommands.addCommandForCoalition(briefingRoom.playerCoalition, dc.endMissionLabel, briefingRoom.f10Menu.missionMenu, briefingRoom.f10MenuCommands.endMission, nil)
 
   -- Report again whenever an objective is completed
   local completeObjective = briefingRoom.mission.coreFunctions.completeObjective

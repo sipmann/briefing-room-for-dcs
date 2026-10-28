@@ -95,6 +95,8 @@ public class DynamicCampaignTests
             Assert.NotNull(mission);
             Assert.NotNull(state.Pending);
             Assert.Equal(sortie.TargetId, state.Pending.TargetId);
+            Assert.Equal(mission.PlayerAirbase.ID, mission.PlayerAirbaseDestination.ID);
+            Assert.Contains(mission.Briefing.FlightBriefings.SelectMany(x => x.Waypoints), x => x.Contains("[TARGET]"));
 
             var miz = await mission.SaveToMizBytes(fixture.Db);
             using var zip = new ZipArchive(new MemoryStream(miz));
@@ -105,6 +107,7 @@ public class DynamicCampaignTests
             }));
             Assert.Contains($"briefingRoom.dynamicCampaign.token = \"{state.Pending.Token}\"", scripts);
             Assert.DoesNotContain("$TOKEN$", scripts);
+            Assert.DoesNotContain("$ENDMISSIONLABEL$", scripts);
         }
         Assert.True(failures.Count == 0, string.Join("\n", failures));
     }

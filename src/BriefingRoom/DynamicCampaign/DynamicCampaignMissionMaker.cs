@@ -152,7 +152,8 @@ namespace BriefingRoom4DCS.DynamicCampaign
             mission.SetValue("DateYear", state.Date.Year);
             mission.SetValue("BriefingDate", $"{state.Date.Day:00}/{state.Date.Month:00}/{state.Date.Year:0000}");
 
-            AddBriefingRemarks(briefingRoom, state, target, departure, sortie.Kind, ref mission);
+            var targetWaypoint = MarkTargetWaypoint(briefingRoom, mission);
+            AddBriefingRemarks(briefingRoom, state, target, departure, sortie.Kind, targetWaypoint, ref mission);
 
             var token = Guid.NewGuid().ToString("N")[..12];
             var reporterLua = File.ReadAllText(REPORTER_LUA);
@@ -162,6 +163,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
             GeneratorTools.ReplaceKey(ref reporterLua, "StockLabels", string.Join(", ", DynamicCampaignInventory.WEAPONS.Select(x =>
                 $"{x} = \"{LuaText(briefingRoom.Translate($"DCWeapon{x}"))}\"")));
             GeneratorTools.ReplaceKey(ref reporterLua, "StockWarning", LuaText(briefingRoom.Translate("DCStockWarning", departure.Name)));
+            GeneratorTools.ReplaceKey(ref reporterLua, "EndMissionLabel", LuaText(briefingRoom.Translate("EndMission")));
             mission.AppendValue("ScriptMissionFeatures", reporterLua);
 
             state.Pending = new DCPendingMission
@@ -185,7 +187,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
             template.ContextCustomFrontLine = state.FrontLine.Select(x => x.ToList()).ToList();
             template.EnvironmentSeason = GetSeason(state.Date.Month);
             template.FlightPlanTheaterStartingAirbase = departure?.AirbaseId ?? campaignTemplate.FlightPlanTheaterStartingAirbase;
-            template.FlightPlanTheaterDestinationAirbase = "";
+            template.FlightPlanTheaterDestinationAirbase = "home"; // Aircraft and weapons return to the departure stock
             if (!template.OptionsMission.Contains("EndMissionOnCommand"))
                 template.OptionsMission.Add("EndMissionOnCommand");
             if (ignoreBorders && !template.OptionsMission.Contains("SpawnAnywhere"))
@@ -271,14 +273,37 @@ namespace BriefingRoom4DCS.DynamicCampaign
             _ => Season.Winter
         };
 
-        private static void AddBriefingRemarks(IBriefingRoom briefingRoom, DynamicCampaignState state, DCAsset target, DCAsset departure, DCSortieKind kind, ref DCSMission mission)
+        // Flags the objective waypoint in the flight plans (kneeboard pages); returns "number: name"
+        private static string MarkTargetWaypoint(IBriefingRoom briefingRoom, DCSMission mission)
+        {
+            // Script waypoints are the objective waypoints, in objective order
+            var objectiveWaypoint = mission.Waypoints.FirstOrDefault(x => !x.ScriptIgnore);
+            if (string.IsNullOrEmpty(objectiveWaypoint.Name)) return null;
+
+            var marker = briefingRoom.Translate("DCTargetWaypointMarker");
+            string found = null;
+            foreach (var flight in mission.Briefing.FlightBriefings)
+                for (var i = 0; i < flight.Waypoints.Count; i++)
+                {
+                    var columns = flight.Waypoints[i].Split('\t');
+                    if (columns[0] != $"{i}: {objectiveWaypoint.Name}") continue;
+                    found ??= columns[0];
+                    columns[0] = $"{columns[0]} {marker}";
+                    flight.Waypoints[i] = string.Join('\t', columns);
+                }
+            return found;
+        }
+
+        private static void AddBriefingRemarks(IBriefingRoom briefingRoom, DynamicCampaignState state, DCAsset target, DCAsset departure, DCSortieKind kind, string targetWaypoint, ref DCSMission mission)
         {
             var remarks = new List<string>
             {
                 briefingRoom.Translate("DCBriefingDay", state.Turn, state.Name),
                 briefingRoom.Translate($"DCBriefingImpact{kind}", DynamicCampaignText.AssetLabel(briefingRoom, state, target)),
-                briefingRoom.Translate("DCBriefingStock", departure.Name, DynamicCampaignInventory.Describe(departure, briefingRoom.Translate)),
             };
+            if (targetWaypoint != null)
+                remarks.Add(briefingRoom.Translate("DCBriefingTargetWaypoint", targetWaypoint));
+            remarks.Add(briefingRoom.Translate("DCBriefingStock", departure.Name, DynamicCampaignInventory.Describe(departure, briefingRoom.Translate)));
             remarks.Reverse();
             foreach (var remark in remarks)
                 mission.Briefing.AddItem(DCSMissionBriefingItemType.Remark, remark, true);
