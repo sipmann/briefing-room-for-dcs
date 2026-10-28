@@ -151,61 +151,7 @@ namespace BriefingRoom4DCS.Generator
             int missionIndex, int missionCount,
             string previousSituationId, Coordinates previousObjectiveCenterCoords, string previousPlayerAirbaseId, string previousDestinationAirbaseId)
         {
-            string weatherPreset = GetWeatherForMission(database, campaignTemplate.EnvironmentBadWeatherChance);
-            MissionTemplate template = new(database)
-            {
-                BriefingMissionName = "",
-                BriefingMissionDescription = "",
-
-                ContextCoalitionBlue = campaignTemplate.ContextCoalitionBlue,
-                ContextCoalitionRed = campaignTemplate.ContextCoalitionRed,
-                ContextDecade = campaignTemplate.ContextDecade,
-                ContextPlayerCoalition = campaignTemplate.ContextPlayerCoalition,
-                ContextTheater = campaignTemplate.ContextTheater,
-                ContextSituation = campaignTemplate.ContextSituation,
-
-                EnvironmentSeason = Season.Random,
-                EnvironmentTimeOfDay = GetTimeOfDayForMission(campaignTemplate.EnvironmentNightMissionChance),
-                EnvironmentWeatherPreset = weatherPreset,
-                EnvironmentWind = GetWindForMission(database, campaignTemplate.EnvironmentBadWeatherChance, weatherPreset),
-
-                FlightPlanObjectiveDistanceMax = campaignTemplate.FlightPlanObjectiveDistanceMax,
-                FlightPlanObjectiveDistanceMin = campaignTemplate.FlightPlanObjectiveDistanceMin,
-                FlightPlanTheaterStartingAirbase = campaignTemplate.FlightPlanTheaterStartingAirbase,
-
-                MissionFeatures = campaignTemplate.MissionFeatures.ToList(),
-
-                Mods = campaignTemplate.Mods.ToList(),
-
-                Objectives = new(),
-
-                OptionsFogOfWar = campaignTemplate.OptionsFogOfWar,
-                OptionsMission = campaignTemplate.OptionsMission.ToList(),
-                OptionsRealism = campaignTemplate.OptionsRealism.ToList(),
-                OptionsUnitBanList = campaignTemplate.OptionsUnitBanList.ToList(),
-
-                PlayerFlightGroups = campaignTemplate.PlayerFlightGroups,
-
-                SituationEnemySkill = GetPowerLevel(campaignTemplate.SituationEnemySkill, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount),
-                SituationEnemyAirDefense = GetPowerLevel(campaignTemplate.SituationEnemyAirDefense, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount),
-                SituationEnemyAirForce = GetPowerLevel(campaignTemplate.SituationEnemyAirForce, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount),
-
-                SituationFriendlySkill = GetPowerLevel(campaignTemplate.SituationFriendlySkill, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount, true),
-                SituationFriendlyAirDefense = GetPowerLevel(campaignTemplate.SituationFriendlyAirDefense, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount, true),
-                SituationFriendlyAirForce = GetPowerLevel(campaignTemplate.SituationFriendlyAirForce, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount, true),
-
-                CombinedArmsCommanderBlue = campaignTemplate.CombinedArmsCommanderBlue,
-                CombinedArmsCommanderRed = campaignTemplate.CombinedArmsCommanderRed,
-                CombinedArmsJTACBlue = campaignTemplate.CombinedArmsJTACBlue,
-                CombinedArmsJTACRed = campaignTemplate.CombinedArmsJTACRed,
-
-                // Derive a per-mission seed from the campaign seed + mission index so that
-                // (a) the campaign as a whole is reproducible from a single seed, and
-                // (b) individual missions stay distinct from each other.
-                RandomSeed = campaignTemplate.RandomSeed.HasValue
-                    ? unchecked(campaignTemplate.RandomSeed.Value + missionIndex)
-                    : (int?)null,
-            };
+            MissionTemplate template = CreateBaseMissionTemplate(database, campaignTemplate, missionIndex, missionCount);
 
             if (!String.IsNullOrEmpty(previousPlayerAirbaseId))
             {
@@ -278,6 +224,68 @@ namespace BriefingRoom4DCS.Generator
             if (!String.IsNullOrEmpty(previousPlayerAirbaseId))
                 template.Objectives[0].CoordinateHint_ = previousObjectiveCenterCoords.CreateNearRandom(5 * Toolbox.NM_TO_METERS, GetObjectiveVariationDistance(campaignTemplate.MissionsObjectiveVariationDistance) * Toolbox.NM_TO_METERS);
 
+            return template;
+        }
+
+        // Mission template carrying over the campaign-wide settings (context, aircraft, options, power levels...),
+        // without objectives. Also used by the dynamic campaign.
+        internal static MissionTemplate CreateBaseMissionTemplate(IDatabase database, CampaignTemplate campaignTemplate, int missionIndex, int missionCount)
+        {
+            string weatherPreset = GetWeatherForMission(database, campaignTemplate.EnvironmentBadWeatherChance);
+            MissionTemplate template = new(database)
+            {
+                BriefingMissionName = "",
+                BriefingMissionDescription = "",
+
+                ContextCoalitionBlue = campaignTemplate.ContextCoalitionBlue,
+                ContextCoalitionRed = campaignTemplate.ContextCoalitionRed,
+                ContextDecade = campaignTemplate.ContextDecade,
+                ContextPlayerCoalition = campaignTemplate.ContextPlayerCoalition,
+                ContextTheater = campaignTemplate.ContextTheater,
+                ContextSituation = campaignTemplate.ContextSituation,
+
+                EnvironmentSeason = Season.Random,
+                EnvironmentTimeOfDay = GetTimeOfDayForMission(campaignTemplate.EnvironmentNightMissionChance),
+                EnvironmentWeatherPreset = weatherPreset,
+                EnvironmentWind = GetWindForMission(database, campaignTemplate.EnvironmentBadWeatherChance, weatherPreset),
+
+                FlightPlanObjectiveDistanceMax = campaignTemplate.FlightPlanObjectiveDistanceMax,
+                FlightPlanObjectiveDistanceMin = campaignTemplate.FlightPlanObjectiveDistanceMin,
+                FlightPlanTheaterStartingAirbase = campaignTemplate.FlightPlanTheaterStartingAirbase,
+
+                MissionFeatures = campaignTemplate.MissionFeatures.ToList(),
+
+                Mods = campaignTemplate.Mods.ToList(),
+
+                Objectives = new(),
+
+                OptionsFogOfWar = campaignTemplate.OptionsFogOfWar,
+                OptionsMission = campaignTemplate.OptionsMission.ToList(),
+                OptionsRealism = campaignTemplate.OptionsRealism.ToList(),
+                OptionsUnitBanList = campaignTemplate.OptionsUnitBanList.ToList(),
+
+                PlayerFlightGroups = campaignTemplate.PlayerFlightGroups,
+
+                SituationEnemySkill = GetPowerLevel(campaignTemplate.SituationEnemySkill, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount),
+                SituationEnemyAirDefense = GetPowerLevel(campaignTemplate.SituationEnemyAirDefense, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount),
+                SituationEnemyAirForce = GetPowerLevel(campaignTemplate.SituationEnemyAirForce, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount),
+
+                SituationFriendlySkill = GetPowerLevel(campaignTemplate.SituationFriendlySkill, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount, true),
+                SituationFriendlyAirDefense = GetPowerLevel(campaignTemplate.SituationFriendlyAirDefense, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount, true),
+                SituationFriendlyAirForce = GetPowerLevel(campaignTemplate.SituationFriendlyAirForce, campaignTemplate.MissionsDifficultyVariation, missionIndex, missionCount, true),
+
+                CombinedArmsCommanderBlue = campaignTemplate.CombinedArmsCommanderBlue,
+                CombinedArmsCommanderRed = campaignTemplate.CombinedArmsCommanderRed,
+                CombinedArmsJTACBlue = campaignTemplate.CombinedArmsJTACBlue,
+                CombinedArmsJTACRed = campaignTemplate.CombinedArmsJTACRed,
+
+                // Derive a per-mission seed from the campaign seed + mission index so that
+                // (a) the campaign as a whole is reproducible from a single seed, and
+                // (b) individual missions stay distinct from each other.
+                RandomSeed = campaignTemplate.RandomSeed.HasValue
+                    ? unchecked(campaignTemplate.RandomSeed.Value + missionIndex)
+                    : (int?)null,
+            };
             return template;
         }
 

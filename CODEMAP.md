@@ -152,6 +152,26 @@ Generator/
 
 ---
 
+### `DynamicCampaign/` — Turn-Based Dynamic Campaign
+
+Persistent theater state (assets, supply network, front line) that each generated mission
+reads and each mission result (parsed from `dcs.log`) updates. See `code_docs/Dynamic-Campaign.md`.
+
+```
+DynamicCampaign/
+├── DynamicCampaignService.cs     # Public entry point used by the UI
+├── DynamicCampaignModels.cs      # State, assets, sorties, results, reports (JSON)
+├── DynamicCampaignRules.cs       # Tuning values
+├── DynamicCampaignBuilder.cs     # Initial layout of both coalitions + front line
+├── DynamicCampaignMissionMaker.cs# Sortie -> MissionTemplate -> DCSMission + reporter script
+├── DynamicCampaignLogParser.cs   # Reads the BRDC| lines from dcs.log
+├── DynamicCampaignSimulator.cs   # Turn resolution: logistics, AI air ops, ground war
+├── DynamicCampaignStore.cs       # One JSON file per campaign (BR_CAMPAIGNS_DIR)
+└── DynamicCampaignText.cs        # Translated labels and events
+```
+
+---
+
 ### `Mission/` — Output Model
 
 The in-memory representation of a generated DCS mission before it is serialized to `.miz`.

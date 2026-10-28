@@ -1,0 +1,482 @@
+@page "/DynamicCampaign"
+@inject IJSRuntime JSRuntime
+@inject Blazored.LocalStorage.ILocalStorageService localStorage
+@inject BriefingRoom4DCS.IBriefingRoom briefingRoom
+@using BriefingRoom4DCS
+@using BriefingRoom4DCS.DynamicCampaign
+@using BriefingRoom4DCS.GUI.Common.Shared.Sections
+@using BriefingRoom4DCS.GUI.Common.Shared.Tabs
+@using BriefingRoom4DCS.GUI.Utils
+@using BriefingRoom4DCS.Template
+@using System.Globalization
+@using System.IO
+@using System.Linq
+@using System.Text
+@using Polly
+
+<LoadingSpinner ON="spinner"/>
+<div class="title-bar">
+    <h1>@briefingRoom.Translate("DynamicCampaign")</h1>
+</div>
+<div class="generator-group">
+    <div class="generator-form">
+        <AlertMessages TemplateMessage="@infoMessage" ErrorMessage="@errorMessage" />
+        @if (state == null)
+        {
+            <div class="generator-block">
+                <h3>@briefingRoom.Translate("DCCampaigns")</h3>
+                @if (campaigns.Count == 0)
+                {
+                    <p>@briefingRoom.Translate("DCNoCampaigns")</p>
+                }
+                else
+                {
+                    <table class="table table-sm">
+                        <tbody>
+                        @foreach (var campaign in campaigns)
+                        {
+                            <tr>
+                                <td><strong>@campaign.Name</strong><br/><small>@campaign.Theater</small></td>
+                                <td>@briefingRoom.Translate("DCTurn") @campaign.Turn<br/><small>@campaign.Date.ToString("d", CultureInfo.CurrentCulture)</small></td>
+                                <td>@briefingRoom.Translate($"DCOutcome{campaign.Outcome}")</td>
+                                <td class="text-right">
+                                    <button class="btn btn-primary btn-sm" @onclick="() => OpenCampaign(campaign.Id)">@briefingRoom.Translate("DCOpen")</button>
+                                    <button class="btn btn-outline-danger btn-sm" @onclick="() => DeleteCampaign(campaign.Id)">@briefingRoom.Translate("DCDelete")</button>
+                                </td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+            </div>
+            <EditForm Model="Template" OnSubmit="StartCampaign">
+                <div class="generator-block">
+                    <h3>@briefingRoom.Translate("DCNewCampaign")</h3>
+                    <p>@briefingRoom.Translate("DCNewCampaignHelp")</p>
+                    <label>@briefingRoom.Translate("DCCampaignName")</label>
+                    <input type="text" class="form-control" @bind="newCampaignName" />
+                    <br/>
+                    <button class="btn btn-primary form-control" type="submit">@briefingRoom.Translate("DCStart")</button>
+                </div>
+                <ul class="nav nav-tabs">
+                    @foreach (var value in tabs)
+                    {
+                        <li class="nav-item">
+                            <a class="nav-link @(tab == value.Key ? "active" : "")" aria-current="page"
+                               @onclick='() => tab = value.Key'>@string.Join(" & ", value.Value.Select(x => briefingRoom.Translate(x)))</a>
+                        </li>
+                    }
+                </ul>
+                @switch (tab)
+                {
+                    case "context-&-enviroment":
+                        <ContextAndEnvTab Template="Template" builderUtils="builderUtils"/>
+                        break;
+                    case "situation":
+                        <SituationTab Template="Template"/>
+                        <CombinedArmsTab Template="Template"/>
+                        break;
+                    case "flight-groups":
+                        <FlightGroupsTab Template="Template" builderUtils="builderUtils" flightGroupUtil="flightGroupUtil"/>
+                        break;
+                    case "options":
+                        <div class="generator-block">
+                            <h3>@briefingRoom.Translate("Options")</h3>
+                            <InputEnum Label="Fog of war" @bind-Value="Template.OptionsFogOfWar" EnumType="FogOfWar"/>
+                            <hr/>
+                            <MissionOptions Template="Template" SearchTerm="" />
+                        </div>
+                        break;
+                    case "unitBanlist":
+                        <UnitBanTab Template="Template" />
+                        break;
+                }
+            </EditForm>
+        }
+        else
+        {
+            <div class="generator-block">
+                <button class="btn btn-secondary btn-sm float-right" @onclick="CloseCampaign"><span class="oi oi-arrow-left"></span> @briefingRoom.Translate("DCBack")</button>
+                <h3>@state.Name</h3>
+                <p>
+                    @briefingRoom.Translate("DCTurn") <strong>@state.Turn</strong> &middot;
+                    @briefingRoom.Translate("DCDate") <strong>@state.Date.ToString("d", CultureInfo.CurrentCulture)</strong> &middot;
+                    @state.Theater &middot;
+                    <strong>@briefingRoom.Translate($"DCOutcome{state.Outcome}")</strong>
+                </p>
+            </div>
+
+            @if (state.Pending != null)
+            {
+                var target = state.GetAsset(state.Pending.TargetId);
+                <div class="generator-block">
+                    <h3>@briefingRoom.Translate("DCPendingMission")</h3>
+                    <p>
+                        <strong>@state.Pending.MissionName</strong><br/>
+                        @DynamicCampaignText.SortieKind(briefingRoom, state.Pending.Kind):
+                        @(target == null ? "" : DynamicCampaignText.AssetLabel(briefingRoom, state, target))
+                    </p>
+                    <p><small>@briefingRoom.Translate("DCPendingHelp")</small></p>
+                    <button class="btn btn-primary form-control" @onclick="DownloadMission"><span class="oi oi-data-transfer-download"></span> @briefingRoom.Translate("DCDownloadMission")</button>
+                    <br/><br/>
+                    <label class="btn btn-success form-control hidden-input-file">
+                        <InputFile OnChange="UploadLog" accept=".log,.txt" />
+                        <span class="oi oi-data-transfer-upload"></span> @briefingRoom.Translate("DCUploadLog")
+                    </label>
+                    <br/><br/>
+                    <div class="btn-group d-flex" role="group">
+                        <button class="btn btn-outline-secondary w-100" @onclick="SkipTurn">@briefingRoom.Translate("DCSkipTurn")</button>
+                        <button class="btn btn-outline-secondary w-100" @onclick="CancelMission">@briefingRoom.Translate("DCCancelMission")</button>
+                    </div>
+                </div>
+            }
+            else if (state.Outcome == DCOutcome.Ongoing)
+            {
+                <div class="generator-block">
+                    <h3>@briefingRoom.Translate("DCAvailableMissions")</h3>
+                    @foreach (var group in sorties.GroupBy(x => x.Kind))
+                    {
+                        <h5>@DynamicCampaignText.SortieKind(briefingRoom, group.Key)</h5>
+                        <table class="table table-sm">
+                            <tbody>
+                            @foreach (var sortie in group)
+                            {
+                                var target = state.GetAsset(sortie.TargetId);
+                                <tr>
+                                    <td>
+                                        @DynamicCampaignText.AssetLabel(briefingRoom, state, target)
+                                        <br/><small class="text-muted">@StrengthText(target)</small>
+                                        @if (!sortie.Suitable)
+                                        {
+                                            <br/><small class="text-warning">@briefingRoom.Translate("DCNotSuitable")</small>
+                                        }
+                                    </td>
+                                    <td class="text-right">
+                                        <button class="btn btn-primary btn-sm" title="@DynamicCampaignText.SortieImpact(briefingRoom, state, sortie)" @onclick="() => GenerateMission(sortie)">@briefingRoom.Translate("DCGenerate")</button>
+                                    </td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            }
+        }
+        <div class=bottom-bar>
+            <LoggerAll logs="MainLayout.logs"/>
+        </div>
+    </div>
+    @if (state != null)
+    {
+        <div class="generator-preview">
+            <div id="map"></div>
+            <div class="generator-group flex-justify-spaced">
+                @foreach (var coalition in new[] { state.PlayerCoalition, state.EnemyCoalition })
+                {
+                    var forces = DynamicCampaignService.GetForces(state, coalition);
+                    <div class="generator-block flex-block">
+                        <h4>@DynamicCampaignText.Side(briefingRoom, state, coalition)</h4>
+                        <table class="table table-sm">
+                            <tbody>
+                                <tr><td>@briefingRoom.Translate("DCFrontStrength")</td><td>@forces.FrontStrength.ToString("0")%</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCAirReadiness")</td><td>@forces.AirReadiness.ToString("0")%</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCSupplies")</td><td>@forces.Supplies.ToString("0")</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCFactories")</td><td>@forces.Factories</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCDepots")</td><td>@forces.Depots</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCAirDefenses")</td><td>@forces.AirDefenses</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCAirbases")</td><td>@forces.Airbases</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCRoutesCut")</td><td>@forces.RoutesCut</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+            <ul class="nav nav-tabs">
+                <li class="nav-item"><a class="nav-link @(viewTab == "reports" ? "active" : "")" @onclick='() => viewTab = "reports"'>@briefingRoom.Translate("DCReports")</a></li>
+                <li class="nav-item"><a class="nav-link @(viewTab == "assets" ? "active" : "")" @onclick='() => viewTab = "assets"'>@briefingRoom.Translate("DCAssets")</a></li>
+            </ul>
+            @if (viewTab == "reports")
+            {
+                @foreach (var report in Enumerable.Reverse(state.Reports))
+                {
+                    <div class="generator-block">
+                        <h5>@briefingRoom.Translate("DCTurn") @report.Turn &middot; @report.Date.ToString("d", CultureInfo.CurrentCulture)</h5>
+                        <ul>
+                            @foreach (var campaignEvent in report.Events)
+                            {
+                                <li class="@EventClass(campaignEvent)">
+                                    @if (campaignEvent.Coalition.HasValue)
+                                    {
+                                        <strong>@DynamicCampaignText.Side(briefingRoom, state, campaignEvent.Coalition):</strong>
+                                    }
+                                    @DynamicCampaignText.Event(briefingRoom, state, campaignEvent)
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+            }
+            else
+            {
+                <table class="table table-sm">
+                    <thead><tr><th></th><th>@briefingRoom.Translate("DCStrength")</th><th>@briefingRoom.Translate("DCStock")</th><th>@briefingRoom.Translate("DCStatus")</th></tr></thead>
+                    <tbody>
+                    @foreach (var asset in state.Assets.Where(x => !x.Removed).OrderBy(x => x.Coalition != state.PlayerCoalition).ThenBy(x => x.Kind).ThenBy(x => x.Name))
+                    {
+                        <tr class="@(asset.Coalition == state.PlayerCoalition ? "text-primary" : "text-danger")">
+                            <td>@DynamicCampaignText.AssetLabel(briefingRoom, state, asset)</td>
+                            <td>@asset.Strength.ToString("0")%</td>
+                            <td>@(asset.Kind == DCAssetKind.Depot || asset.Kind == DCAssetKind.Airbase ? asset.Stock.ToString("0") : "")</td>
+                            <td>@AssetStatus(asset)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private const string TEMPLATE_STORAGE_KEY = "DCSDynamicCampaignTemplate";
+    private readonly DynamicCampaignStore store = new();
+    private CampaignTemplate Template;
+    private BuilderUtils builderUtils { get; set; }
+    private FlightGroupUtils flightGroupUtil = new FlightGroupUtils();
+    private List<DynamicCampaignState> campaigns = new();
+    private DynamicCampaignState state;
+    private List<DCSortie> sorties = new();
+    private string newCampaignName = "";
+    private string errorMessage;
+    private string infoMessage;
+    private bool spinner;
+    private string tab = "context-&-enviroment";
+    private string viewTab = "reports";
+    private readonly Dictionary<string, List<string>> tabs = new()
+    {
+        { "context-&-enviroment", new() { "ContextAndEnviroment" } },
+        { "situation", new() { "Situation", "CombinedArms" } },
+        { "flight-groups", new() { "FlightGroups" } },
+        { "options", new() { "Options" } },
+        { "unitBanlist", new() { "UnitBanList" } },
+    };
+
+    protected override void OnInitialized()
+    {
+        builderUtils = new BuilderUtils(briefingRoom);
+        Template = new CampaignTemplate(briefingRoom);
+        flightGroupUtil.Tab = Template.PlayerFlightGroups[0];
+        LoadCampaignList();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            if (state == null)
+                await localStorage.SetItemAsync(TEMPLATE_STORAGE_KEY, Template.GetIniBytes());
+            return;
+        }
+        try
+        {
+            var templateBytes = await localStorage.GetItemAsync<byte[]>(TEMPLATE_STORAGE_KEY);
+            if (templateBytes != null)
+            {
+                Template.LoadFromString(Encoding.UTF8.GetString(templateBytes));
+                flightGroupUtil.Tab = Template.PlayerFlightGroups[0];
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    private void LoadCampaignList()
+    {
+        try
+        {
+            campaigns = store.List();
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+        }
+    }
+
+    private async Task StartCampaign()
+    {
+        await RunBusy(async () =>
+        {
+            var created = await Task.Run(() => DynamicCampaignService.Create(briefingRoom, Template, newCampaignName));
+            store.Save(created);
+            newCampaignName = "";
+            await ShowCampaign(created);
+        });
+    }
+
+    private async Task OpenCampaign(string id)
+    {
+        await RunBusy(async () =>
+        {
+            var loaded = store.Load(id);
+            if (loaded != null) await ShowCampaign(loaded);
+        });
+    }
+
+    private async Task ShowCampaign(DynamicCampaignState campaign)
+    {
+        state = campaign;
+        sorties = DynamicCampaignService.GetSorties(briefingRoom, state);
+        StateHasChanged();
+        await RenderMap();
+    }
+
+    private void CloseCampaign()
+    {
+        state = null;
+        sorties = new();
+        LoadCampaignList();
+    }
+
+    private async Task DeleteCampaign(string id)
+    {
+        if (!await JSRuntime.InvokeAsync<bool>("confirm", briefingRoom.Translate("DCDeleteConfirm"))) return;
+        store.Delete(id);
+        LoadCampaignList();
+    }
+
+    private async Task GenerateMission(DCSortie sortie)
+    {
+        await RunBusy(async () =>
+        {
+            var miz = await Task.Run(async () =>
+            {
+                var mission = DynamicCampaignService.GenerateMission(briefingRoom, state, sortie);
+                return await mission.SaveToMizBytes(briefingRoom.Database);
+            });
+            store.SaveMission(state.Id, miz);
+            store.Save(state);
+            await ShowCampaign(state);
+            await DownloadMission();
+        });
+    }
+
+    private async Task DownloadMission()
+    {
+        var miz = store.LoadMission(state.Id);
+        if (miz == null)
+        {
+            errorMessage = briefingRoom.Translate("DCMissionMissing");
+            return;
+        }
+        await JSRuntime.InvokeVoidAsync("BlazorDownloadFile", $"{state.Name} - {briefingRoom.Translate("DCTurn")} {state.Turn} - {state.Pending.MissionName}.miz", "application/octet-stream", miz);
+    }
+
+    private async Task UploadLog(InputFileChangeEventArgs e)
+    {
+        await RunBusy(async () =>
+        {
+            using var memory = new MemoryStream();
+            await e.File.OpenReadStream(BriefingRoom.MAXFILESIZE * 4).CopyToAsync(memory);
+            memory.Position = 0;
+            using var reader = new StreamReader(memory);
+            var result = DynamicCampaignLogParser.Parse(reader, state.Pending.Token);
+            if (result == null)
+            {
+                errorMessage = briefingRoom.Translate("DCLogNoReport");
+                return;
+            }
+            await ResolveTurn(result);
+        });
+    }
+
+    private async Task SkipTurn() => await RunBusy(() => ResolveTurn(null));
+
+    private async Task ResolveTurn(DCMissionResult result)
+    {
+        var turn = state.Turn;
+        if (result == null) DynamicCampaignService.SkipTurn(state);
+        else DynamicCampaignService.ResolveTurn(state, result);
+        store.DeleteMission(state.Id);
+        store.Save(state);
+        infoMessage = briefingRoom.Translate("DCResultApplied", turn);
+        viewTab = "reports";
+        await ShowCampaign(state);
+    }
+
+    private async Task CancelMission()
+    {
+        await RunBusy(async () =>
+        {
+            DynamicCampaignService.CancelMission(state);
+            store.DeleteMission(state.Id);
+            store.Save(state);
+            await ShowCampaign(state);
+        });
+    }
+
+    private async Task RenderMap()
+    {
+        try
+        {
+            var mapData = DynamicCampaignService.GetMapData(briefingRoom, state);
+            await Policy.Handle<Exception>().RetryAsync(3).ExecuteAsync(async () =>
+                await JSRuntime.InvokeVoidAsync("RenderMap", mapData, state.Theater, state.PlayerCoalition == Coalition.Red));
+            // The campaign map shows the forces and the front line right away
+            foreach (var layer in new[] { "SAMsBlue", "SAMsRed", "GroundForcesBlue", "GroundForcesRed", "Lines" })
+                await JSRuntime.InvokeVoidAsync("ToggleLayer", layer);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+    }
+
+    private async Task RunBusy(Func<Task> action)
+    {
+        try
+        {
+            errorMessage = "";
+            infoMessage = "";
+            spinner = true;
+            StateHasChanged();
+            await action();
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+        }
+        finally
+        {
+            spinner = false;
+            StateHasChanged();
+        }
+    }
+
+    private void SetError(Exception ex)
+    {
+        Console.WriteLine(ex);
+        errorMessage = ex.Message;
+        if (ex.InnerException != null)
+            errorMessage += " " + ex.InnerException.Message;
+    }
+
+    private string StrengthText(DCAsset asset) =>
+        $"{briefingRoom.Translate("DCStrength")} {asset.Strength:0}%" + (asset.Kind == DCAssetKind.Depot || asset.Kind == DCAssetKind.Airbase ? $" · {briefingRoom.Translate("DCStock")} {asset.Stock:0}" : "");
+
+    private string AssetStatus(DCAsset asset)
+    {
+        if (asset.IsRoute && asset.CutTurns > 0) return $"{briefingRoom.Translate("DCCut")} ({asset.CutTurns})";
+        if (!asset.IsAlive && !asset.IsRoute) return briefingRoom.Translate("DCDestroyed");
+        return briefingRoom.Translate("DCOperational");
+    }
+
+    private string EventClass(DCEvent campaignEvent) => campaignEvent.Key switch
+    {
+        "DCEventVictory" => "text-success font-weight-bold",
+        "DCEventDefeat" => "text-danger font-weight-bold",
+        _ => campaignEvent.Coalition == null ? "" : campaignEvent.Coalition == state.PlayerCoalition ? "text-primary" : "text-danger"
+    };
+}
