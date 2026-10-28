@@ -58,7 +58,7 @@ public class DeterminismTests
     {
         var template = new MissionTemplate(
             fixture.Db,
-            $"{BriefingRoom.GetBriefingRoomRootPath()}\\testTemplates\\Caucasus.brt");
+            Path.Combine(BriefingRoom.GetBriefingRoomRootPath(), "testTemplates", "Caucasus.brt"));
         template.RandomSeed = 9931;
 
         var path = Path.Combine(Path.GetTempPath(), $"br-seed-roundtrip-{System.Guid.NewGuid():N}.brt");
@@ -85,7 +85,7 @@ public class DeterminismTests
         var briefingRoom = new BriefingRoom(fixture.Db);
         var template = new MissionTemplate(
             fixture.Db,
-            $"{BriefingRoom.GetBriefingRoomRootPath()}\\testTemplates\\Caucasus.brt");
+            Path.Combine(BriefingRoom.GetBriefingRoomRootPath(), "testTemplates", "Caucasus.brt"));
         template.RandomSeed = seed;
         return briefingRoom.GenerateMission(template);
     }

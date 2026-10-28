@@ -32,7 +32,7 @@ public class SmokeTests
     {
         var briefingRoom = new BriefingRoom(fixture.Db);
 
-        DCSMission mission = briefingRoom.GenerateMission($"{BriefingRoom.GetBriefingRoomRootPath()}\\testTemplates\\{theaterID}.brt");
+        DCSMission mission = briefingRoom.GenerateMission(Path.Combine(BriefingRoom.GetBriefingRoomRootPath(), "testTemplates", $"{theaterID}.brt"));
 
         Assert.NotNull(mission);
         Assert.Equal(theaterID, mission.TheaterID);
@@ -45,7 +45,7 @@ public class SmokeTests
     {
         var briefingRoom = new BriefingRoom(fixture.Db);
 
-        DCSCampaign campaign = briefingRoom.GenerateCampaign($"{BriefingRoom.GetBriefingRoomRootPath()}\\testTemplates\\Test.cbrt");
+        DCSCampaign campaign = briefingRoom.GenerateCampaign(Path.Combine(BriefingRoom.GetBriefingRoomRootPath(), "testTemplates", "Test.cbrt"));
 
         Assert.NotNull(campaign);
         Assert.Equal(3, campaign.MissionCount);
@@ -69,7 +69,7 @@ public class SmokeTests
         var briefingRoom = new BriefingRoom(fixture.Db);
 
         DCSMission mission = briefingRoom.GenerateMission(
-            $"{BriefingRoom.GetBriefingRoomRootPath()}\\testTemplates\\HoldSuperiorityProgression.brt");
+            Path.Combine(BriefingRoom.GetBriefingRoomRootPath(), "testTemplates", "HoldSuperiorityProgression.brt"));
 
         Assert.NotNull(mission);
         Assert.Equal("Caucasus", mission.TheaterID);

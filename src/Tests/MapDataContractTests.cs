@@ -33,7 +33,7 @@ public class MapDataContractTests
         var briefingRoom = new BriefingRoom(fixture.Db);
         var template = new MissionTemplate(
             fixture.Db,
-            $"{BriefingRoom.GetBriefingRoomRootPath()}\\Default.brt");
+            Path.Combine(BriefingRoom.GetBriefingRoomRootPath(), "Default.brt"));
 
         var mapData = briefingRoom.GetMapSupportingMapData(template);
 

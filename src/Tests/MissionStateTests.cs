@@ -16,7 +16,7 @@ public class DCSMissionStateTests
     public void RevertOneState()
     {
         var br = new BriefingRoom(fixture.Db);
-        var template = new MissionTemplate(fixture.Db, $"{BriefingRoom.GetBriefingRoomRootPath()}\\Default.brt");
+        var template = new MissionTemplate(fixture.Db, Path.Combine(BriefingRoom.GetBriefingRoomRootPath(), "Default.brt"));
         var templateRecord = new MissionTemplateRecord(fixture.Db, template);
         var mission = new DCSMission(fixture.Db, "en", templateRecord);
         mission.SaveStage(MissionStageName.Initialization);
@@ -42,7 +42,7 @@ public class DCSMissionStateTests
     public void RevertTwoStates()
     {
         var br = new BriefingRoom(fixture.Db);
-        var template = new MissionTemplate(fixture.Db, $"{BriefingRoom.GetBriefingRoomRootPath()}\\Default.brt");
+        var template = new MissionTemplate(fixture.Db, Path.Combine(BriefingRoom.GetBriefingRoomRootPath(), "Default.brt"));
         var templateRecord = new MissionTemplateRecord(fixture.Db, template);
         var mission = new DCSMission(fixture.Db, "en", templateRecord);
         mission.SaveStage(MissionStageName.Initialization);
