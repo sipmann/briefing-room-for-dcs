@@ -51,12 +51,19 @@ namespace BriefingRoom4DCS.DynamicCampaign
         {
             var args = campaignEvent.Args.Select(x =>
             {
+                if (x != null && x.StartsWith('%')) // Weapon counts: "%AAM=2;AGM=4"
+                    return (object)string.Join(", ", x[1..].Split(';', System.StringSplitOptions.RemoveEmptyEntries)
+                        .Select(pair => pair.Split('='))
+                        .Where(pair => pair.Length == 2)
+                        .Select(pair => $"{briefingRoom.Translate($"DCWeapon{pair[0]}")} {pair[1]}"));
                 if (x == null || !x.StartsWith('@')) return (object)x;
                 var asset = state.GetAsset(x[1..]);
                 return asset == null ? x : AssetLabel(briefingRoom, state, asset);
             }).ToArray();
             return briefingRoom.Translate(campaignEvent.Key, args);
         }
+
+        public static string Stock(IBriefingRoom briefingRoom, DCAsset asset) => DynamicCampaignInventory.Describe(asset, briefingRoom.Translate);
 
         public static string Side(IBriefingRoom briefingRoom, DynamicCampaignState state, Coalition? coalition) =>
             coalition == null ? "" : briefingRoom.Translate(coalition == state.PlayerCoalition ? "DCSideAlly" : "DCSideEnemy");

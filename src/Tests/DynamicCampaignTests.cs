@@ -222,4 +222,103 @@ public class DynamicCampaignTests
         briefingRoom.LanguageKey = "pt";
         Assert.Equal("Fábrica", DynamicCampaignText.AssetKind(briefingRoom, DCAssetKind.Factory));
     }
+
+    [Fact]
+    public void AirbasesStartWithAircraftAndWeapons()
+    {
+        var (_, state) = CreateCampaign();
+        Assert.Equal(2, state.PlayerAircraft["Su-25T"]);
+        foreach (var airbase in state.GetAssets(state.PlayerCoalition, DCAssetKind.Airbase))
+        {
+            Assert.True(airbase.Aircraft!["Su-25T"] > 0);
+            Assert.True(airbase.Aircraft["Fighter"] > 0);
+            Assert.True(airbase.Weapons!["AAM"] > 0);
+        }
+        Assert.All(state.GetAssets(state.EnemyCoalition, DCAssetKind.Airbase), x => Assert.False(x.Aircraft!.ContainsKey("Su-25T")));
+        Assert.All(state.GetAssets(state.EnemyCoalition, DCAssetKind.Depot), x => Assert.True(x.Weapons!["Bomb"] > 0));
+    }
+
+    [Fact]
+    public void CampaignsWithoutStockGetOneWhenOpened()
+    {
+        var (briefingRoom, state) = CreateCampaign();
+        foreach (var asset in state.Assets) { asset.Weapons = null; asset.Aircraft = null; }
+        state.PlayerAircraft = new();
+
+        DynamicCampaignService.GetSorties(briefingRoom, state);
+
+        Assert.All(state.GetAssets(state.PlayerCoalition, DCAssetKind.Airbase), x => Assert.True(x.Aircraft!["Su-25T"] > 0));
+    }
+
+    [Fact]
+    public void MissionConsumesWeaponsAndAircraftOfTheDepartureAirbase()
+    {
+        var (briefingRoom, state) = CreateCampaign();
+        var sortie = DynamicCampaignService.GetSorties(briefingRoom, state).First(x => x.Unavailable == null);
+        var departure = state.GetAsset(sortie.DepartureId)!;
+        var aircraftBefore = departure.Aircraft!["Su-25T"];
+        state.Pending = new DCPendingMission { Token = "0123456789ab", TargetId = sortie.TargetId, Kind = sortie.Kind, DepartureId = departure.Id, Turn = state.Turn };
+
+        DynamicCampaignService.ResolveTurn(state, new DCMissionResult
+        {
+            PlayerAircraftLost = 1,
+            Objectives = new() { new DCObjectiveResult { Dead = 1, Total = 4 } },
+            WeaponsUsed = new() { { "AGM", 4 } },
+            AircraftLost = new() { { "Su-25T", 1 } },
+        });
+
+        Assert.Equal(aircraftBefore - 1, departure.Aircraft["Su-25T"]);
+        Assert.Contains(state.Reports.Last().Events, x => x.Key == "DCEventWeaponsUsed");
+        var text = DynamicCampaignText.Event(briefingRoom, state, state.Reports.Last().Events.First(x => x.Key == "DCEventWeaponsUsed"));
+        Assert.Contains("Air-to-ground missiles 4", text);
+    }
+
+    [Fact]
+    public void SortiesNeedAircraftAndWeapons()
+    {
+        var (briefingRoom, state) = CreateCampaign();
+        foreach (var airbase in state.GetAssets(state.PlayerCoalition, DCAssetKind.Airbase)) airbase.Weapons!["AAM"] = 0;
+        var sorties = DynamicCampaignService.GetSorties(briefingRoom, state);
+        Assert.All(sorties.Where(x => x.Kind == DCSortieKind.InterceptCargo), x => Assert.Equal("DCUnavailableNoWeapons", x.Unavailable));
+        Assert.Contains(sorties, x => x.Kind == DCSortieKind.StrikeDepot && x.Unavailable == null);
+
+        foreach (var airbase in state.GetAssets(state.PlayerCoalition, DCAssetKind.Airbase)) airbase.Aircraft!["Su-25T"] = 1;
+        sorties = DynamicCampaignService.GetSorties(briefingRoom, state);
+        Assert.All(sorties, x => Assert.Equal("DCUnavailableNoAircraft", x.Unavailable));
+        Assert.Throws<BriefingRoomException>(() => DynamicCampaignService.GenerateMission(briefingRoom, state, sorties.First()));
+    }
+
+    [Fact]
+    public void FactoriesProduceAndAirbaseStrikesDestroyParkedAircraft()
+    {
+        var (_, state) = CreateCampaign();
+        var enemy = state.EnemyCoalition;
+        var factory = state.GetAssets(enemy, DCAssetKind.Factory).First();
+        var airbase = state.GetAssets(enemy, DCAssetKind.Airbase).First();
+        var parkedBefore = airbase.Aircraft!["Attack"] + airbase.Aircraft["Fighter"];
+        state.Pending = new DCPendingMission { Token = "0123456789ab", TargetId = airbase.Id, Kind = DCSortieKind.AirbaseStrike, Turn = state.Turn };
+
+        DynamicCampaignService.ResolveTurn(state, new DCMissionResult { Objectives = new() { new DCObjectiveResult { Dead = 3, Total = 4 } } });
+
+        Assert.True(factory.Weapons!.Values.Sum() > 0 || state.GetAssets(enemy, DCAssetKind.Depot).Any(x => x.Weapons!["Bomb"] > 120));
+        Assert.Contains(state.Reports.Last().Events, x => x.Key == "DCEventAircraftDestroyedOnGround" && x.Args.Contains($"@{airbase.Id}"));
+        Assert.True(airbase.Aircraft["Attack"] + airbase.Aircraft["Fighter"] < parkedBefore);
+
+        // Without factories nothing new is produced
+        foreach (var f in state.GetAssets(enemy, DCAssetKind.Factory)) { f.Strength = 0; f.Weapons!.Clear(); }
+        DynamicCampaignService.SkipTurn(state);
+        Assert.All(state.GetAssets(enemy, DCAssetKind.Factory), x => Assert.Equal(0, x.Weapons!.Values.Sum()));
+    }
+
+    [Fact]
+    public void ParsesWeaponsUsedAndAircraftLost()
+    {
+        var result = DynamicCampaignLogParser.Parse(
+            "INFO    SCRIPTING (Main): BRDC|0123456789ab|2|900|1|1|3/4/1|W:AGM=4;Rocket=14;Junk=3|L:FA-18C_hornet=1",
+            "0123456789ab")!;
+        Assert.Equal(4, result.WeaponsUsed["AGM"]);
+        Assert.Equal(14, result.WeaponsUsed["Rocket"]);
+        Assert.False(result.WeaponsUsed.ContainsKey("Junk"));
+        Assert.Equal(1, result.AircraftLost["FA-18C_hornet"]);
+    }
 }

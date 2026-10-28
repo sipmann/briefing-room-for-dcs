@@ -81,23 +81,41 @@ namespace BriefingRoom4DCS.DynamicCampaign
                             target.Strength = Math.Min(target.Strength, 25);
                         break;
                     case DCAssetKind.Airbase:
+                        DestroyParkedAircraft(target, objective.Dead, report);
                         Damage(state, target, fraction * 45, report);
                         target.Stock = Math.Max(0, target.Stock - fraction * 20);
                         break;
                     default:
                         Damage(state, target, fraction * target.Strength, report);
                         if (target.Kind == DCAssetKind.Depot) target.Stock *= 1 - fraction;
+                        if (target.Kind == DCAssetKind.Depot || target.Kind == DCAssetKind.Factory)
+                            foreach (var weapon in DynamicCampaignInventory.WEAPONS)
+                                DynamicCampaignInventory.Take(target.Weapons, weapon, DynamicCampaignInventory.Get(target.Weapons, weapon) * fraction);
                         break;
                 }
             }
             else
                 report.Events.Add(new DCEvent("DCEventMissionNoTargets", state.PlayerCoalition));
 
+            var departure = state.GetAsset(pending.DepartureId);
+            if (departure != null && result.WeaponsUsed.Count > 0)
+            {
+                foreach (var (weapon, used) in result.WeaponsUsed)
+                    DynamicCampaignInventory.Take(departure.Weapons, weapon, used);
+                report.Events.Add(new DCEvent("DCEventWeaponsUsed", state.PlayerCoalition, Ref(departure),
+                    "%" + string.Join(";", result.WeaponsUsed.Select(x => $"{x.Key}={x.Value}"))));
+            }
             if (result.PlayerAircraftLost > 0)
             {
-                var departure = state.GetAsset(pending.DepartureId);
                 if (departure != null)
+                {
                     departure.Strength = Math.Max(0, departure.Strength - result.PlayerAircraftLost * DynamicCampaignRules.PLAYER_AIRCRAFT_LOSS_READINESS);
+                    var lost = result.AircraftLost.Count > 0
+                        ? result.AircraftLost
+                        : state.PlayerAircraft.Keys.Take(1).ToDictionary(x => x, _ => result.PlayerAircraftLost); // Reports without aircraft types
+                    foreach (var (type, count) in lost)
+                        DynamicCampaignInventory.Take(departure.Aircraft, type, count);
+                }
                 report.Events.Add(new DCEvent("DCEventPlayerLosses", state.PlayerCoalition, result.PlayerAircraftLost));
             }
         }
@@ -125,6 +143,9 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 route.Strength = Math.Min(100, route.Strength + DynamicCampaignRules.ROUTE_RECOVERY);
             }
 
+            // Weapons and aircraft production
+            DynamicCampaignInventory.Produce(state, coalition);
+
             // Factories > depots, by convoy
             var production = assets.Where(x => x.Kind == DCAssetKind.Factory && x.IsAlive).Sum(x => x.Strength / 100 * DynamicCampaignRules.FACTORY_OUTPUT);
             foreach (var route in routes.Where(x => x.Kind == DCAssetKind.GroundRoute && IsFrom(state, x, DCAssetKind.Factory))
@@ -135,6 +156,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 var amount = Math.Min(production, Math.Min(Capacity(route, DynamicCampaignRules.GROUND_ROUTE_CAPACITY), DynamicCampaignRules.DEPOT_MAX_STOCK - depot.Stock));
                 depot.Stock += Math.Max(0, amount);
                 production -= Math.Max(0, amount);
+                DynamicCampaignInventory.TransferWeapons(state.GetAsset(route.FromId), depot, 0.5 * route.Strength / 100);
             }
 
             // Rear airbases get supplies by road from their depot, forward ones only by cargo flights
@@ -143,6 +165,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
             {
                 var depot = state.GetAsset(airbase.SupplierId);
                 airbase.Stock += Take(depot, Math.Min(15, DynamicCampaignRules.AIRBASE_MAX_STOCK - airbase.Stock));
+                if (depot != null && depot.IsAlive) DynamicCampaignInventory.TransferWeapons(depot, airbase, 0.3);
             }
             foreach (var route in routes.Where(x => x.Kind == DCAssetKind.AirRoute && Runs(state, x)))
             {
@@ -150,7 +173,10 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 var destination = state.GetAsset(route.ToId);
                 if (origin == null || destination == null || !origin.IsAlive || !destination.IsAlive) continue;
                 var amount = Math.Min(Capacity(route, DynamicCampaignRules.AIR_ROUTE_CAPACITY), DynamicCampaignRules.AIRBASE_MAX_STOCK - destination.Stock);
-                destination.Stock += Take(state.GetAsset(origin.SupplierId), amount);
+                var originDepot = state.GetAsset(origin.SupplierId);
+                destination.Stock += Take(originDepot, amount);
+                if (originDepot != null && originDepot.IsAlive)
+                    DynamicCampaignInventory.TransferWeapons(originDepot, destination, 0.3 * route.Strength / 100);
             }
 
             // Air readiness depends on airbase supplies
@@ -245,6 +271,13 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 report.Events.Add(new DCEvent("DCEventAirDefenseRebuilt", coalition, Ref(site)));
             }
 
+            // Fighters are ferried from the best-equipped airbase to one left without any
+            var airbases = state.GetAssets(coalition, DCAssetKind.Airbase).Where(x => x.IsAlive).ToList();
+            var emptyBase = airbases.FirstOrDefault(x => DynamicCampaignInventory.Get(x.Aircraft, DynamicCampaignInventory.FIGHTER) < 1);
+            var fullBase = airbases.MaxBy(x => DynamicCampaignInventory.Get(x.Aircraft, DynamicCampaignInventory.FIGHTER));
+            if (emptyBase != null && fullBase != null && DynamicCampaignInventory.Get(fullBase.Aircraft, DynamicCampaignInventory.FIGHTER) >= 6)
+                DynamicCampaignInventory.Add(emptyBase.Aircraft, DynamicCampaignInventory.FIGHTER, DynamicCampaignInventory.Take(fullBase.Aircraft, DynamicCampaignInventory.FIGHTER, 2));
+
             // Spare supplies go to the weakest front unit
             var richest = depots.MaxBy(x => x.Stock);
             var weakest = state.GetAssets(coalition, DCAssetKind.FrontUnit).Where(x => x.IsAlive && x.Strength < 60).MinBy(x => x.Strength);
@@ -258,15 +291,25 @@ namespace BriefingRoom4DCS.DynamicCampaign
 
         // ---------------------------------------------------------------- AI air operations
 
+        private static readonly string[] AI_STRIKE_WEAPONS = { DynamicCampaignInventory.GUIDED_BOMB, DynamicCampaignInventory.AGM, DynamicCampaignInventory.BOMB, DynamicCampaignInventory.ROCKET };
+        private const double AI_SORTIE_WEAPONS = 4;
+        private const double AI_SORTIE_AIRCRAFT = 4;
+
+        // Strike packages need attack aircraft and air-to-ground weapons at their airbase;
+        // the defender's fighters (with missiles) and SAM cover decide how it goes
         private static void RunAirOperations(DynamicCampaignState state, Coalition coalition, Random rng, DCTurnReport report)
         {
             var enemy = coalition == Coalition.Blue ? Coalition.Red : Coalition.Blue;
             var airbases = state.GetAssets(coalition, DCAssetKind.Airbase).Where(x => x.IsAlive).ToList();
-            if (airbases.Count == 0) return;
+            var strikeBases = airbases.Where(x => DynamicCampaignInventory.Get(x.Aircraft, DynamicCampaignInventory.ATTACK) >= 2 && AI_STRIKE_WEAPONS.Concat(new[] { DynamicCampaignInventory.ARM }).Sum(w => DynamicCampaignInventory.Get(x.Weapons, w)) >= AI_SORTIE_WEAPONS).ToList();
+            if (strikeBases.Count == 0)
+            {
+                if (airbases.Count > 0) report.Events.Add(new DCEvent("DCEventNoAirOperations", coalition));
+                return;
+            }
             var sorties = Math.Min(DynamicCampaignRules.MAX_AI_SORTIES,
-                (int)Math.Round(airbases.Sum(x => x.Strength) / 100 * DynamicCampaignRules.AI_SORTIES_PER_FULL_AIRBASE));
-            var ownReadiness = DynamicCampaignMissionMaker.GetAirReadiness(state, coalition);
-            var enemyReadiness = DynamicCampaignMissionMaker.GetAirReadiness(state, enemy);
+                (int)Math.Floor(strikeBases.Sum(x => DynamicCampaignInventory.Get(x.Aircraft, DynamicCampaignInventory.ATTACK) * x.Strength / 100) / AI_SORTIE_AIRCRAFT));
+            var ownFighters = Math.Min(1, DynamicCampaignInventory.GetFighterPower(state, coalition) / DynamicCampaignInventory.InitialFighters);
 
             for (var i = 0; i < sorties; i++)
             {
@@ -283,25 +326,52 @@ namespace BriefingRoom4DCS.DynamicCampaign
                     if (site != null) { target = site; cover = DynamicCampaignMissionMaker.GetAirDefenseCover(state, enemy, site.Center); }
                 }
 
-                var successChance = Math.Clamp(0.6 - 0.22 * cover - 0.25 * enemyReadiness + 0.2 * ownReadiness, 0.1, 0.85);
+                // Package from the airbase with the most attack aircraft that still has the weapons
+                var weapons = target.Kind == DCAssetKind.AirDefense ? new[] { DynamicCampaignInventory.ARM }.Concat(AI_STRIKE_WEAPONS).ToArray() : AI_STRIKE_WEAPONS;
+                var airbase = strikeBases
+                    .Where(x => DynamicCampaignInventory.Get(x.Aircraft, DynamicCampaignInventory.ATTACK) >= 2 && weapons.Any(w => DynamicCampaignInventory.Get(x.Weapons, w) >= 2))
+                    .MaxBy(x => DynamicCampaignInventory.Get(x.Aircraft, DynamicCampaignInventory.ATTACK));
+                if (airbase == null) break;
+                var weapon = weapons.First(w => DynamicCampaignInventory.Get(airbase.Weapons, w) >= 2);
+                DynamicCampaignInventory.Take(airbase.Weapons, weapon, AI_SORTIE_WEAPONS);
+
+                // The defender scrambles fighters, spending missiles
+                var enemyFighters = Math.Min(1, DynamicCampaignInventory.GetFighterPower(state, enemy) / DynamicCampaignInventory.InitialFighters);
+                var intercepted = rng.NextDouble() < enemyFighters;
+                if (intercepted)
+                {
+                    var interceptorBase = state.GetAssets(enemy, DCAssetKind.Airbase).Where(x => x.IsAlive).MaxBy(x => DynamicCampaignInventory.Get(x.Aircraft, DynamicCampaignInventory.FIGHTER));
+                    DynamicCampaignInventory.Take(interceptorBase?.Weapons, DynamicCampaignInventory.AAM, 2);
+                }
+
+                var successChance = Math.Clamp(0.65 - 0.22 * cover - (intercepted ? 0.3 : 0) + 0.15 * ownFighters, 0.1, 0.85);
                 if (rng.NextDouble() < successChance)
                 {
                     var damage = rng.Next(20, 46);
                     report.Events.Add(new DCEvent("DCEventAIStrikeSuccess", coalition, Ref(target), damage));
                     if (target.IsRoute) CutRoute(target, report);
+                    if (target.Kind == DCAssetKind.Airbase) DestroyParkedAircraft(target, rng.Next(1, 4), report);
                     Damage(state, target, damage, report);
                 }
                 else
                     report.Events.Add(new DCEvent("DCEventAIStrikeFailed", coalition, Ref(target)));
 
-                var lossChance = Math.Clamp(0.08 + 0.18 * cover + 0.2 * enemyReadiness, 0, 0.6);
+                var lossChance = Math.Clamp(0.08 + 0.18 * cover + (intercepted ? 0.25 : 0), 0, 0.6);
                 if (rng.NextDouble() < lossChance)
                 {
-                    var airbase = airbases[rng.Next(airbases.Count)];
-                    airbase.Strength = Math.Max(DynamicCampaignRules.DESTROYED_THRESHOLD, airbase.Strength - 8);
+                    DynamicCampaignInventory.Take(airbase.Aircraft, DynamicCampaignInventory.ATTACK, 1);
                     report.Events.Add(new DCEvent("DCEventAIAircraftLost", coalition, Ref(airbase)));
                 }
             }
+        }
+
+        private static void DestroyParkedAircraft(DCAsset airbase, int count, DCTurnReport report)
+        {
+            var destroyed = 0.0;
+            foreach (var fleet in new[] { DynamicCampaignInventory.ATTACK, DynamicCampaignInventory.FIGHTER })
+                destroyed += DynamicCampaignInventory.Take(airbase.Aircraft, fleet, count - destroyed);
+            if (destroyed >= 1)
+                report.Events.Add(new DCEvent("DCEventAircraftDestroyedOnGround", airbase.Coalition, Ref(airbase), Math.Floor(destroyed)));
         }
 
         private static DCAsset PickAITarget(DynamicCampaignState state, Coalition targetCoalition, Random rng)
@@ -394,6 +464,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 if (owner == asset.Coalition || DynamicCampaignBuilder.DistanceToLine(asset.Coordinates, line) > 30000) continue;
                 if (asset.Kind == DCAssetKind.Airbase)
                 {
+                    DynamicCampaignInventory.Clear(asset);
                     asset.Coalition = owner;
                     asset.Strength = 20;
                     asset.Stock = 0;
@@ -405,6 +476,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 else
                 {
                     asset.Strength = 0;
+                    DynamicCampaignInventory.Clear(asset);
                     report.Events.Add(new DCEvent("DCEventAssetOverrun", owner, Ref(asset)));
                 }
             }
@@ -445,6 +517,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
             {
                 asset.Strength = 0;
                 if (asset.Kind == DCAssetKind.Depot) asset.Stock = 0;
+                if (asset.Kind == DCAssetKind.Depot || asset.Kind == DCAssetKind.Factory) asset.Weapons?.Clear();
                 report.Events.Add(new DCEvent("DCEventAssetDestroyed", asset.Coalition, Ref(asset)));
             }
         }

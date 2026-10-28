@@ -116,6 +116,13 @@
                         @DynamicCampaignText.SortieKind(briefingRoom, state.Pending.Kind):
                         @(target == null ? "" : DynamicCampaignText.AssetLabel(briefingRoom, state, target))
                     </p>
+                    @if (state.GetAsset(state.Pending.DepartureId) is DCAsset pendingDeparture)
+                    {
+                        <p>
+                            @briefingRoom.Translate("DCDeparture"): <strong>@pendingDeparture.Name</strong><br/>
+                            <small>@briefingRoom.Translate("DCInventory"): @DynamicCampaignText.Stock(briefingRoom, pendingDeparture)</small>
+                        </p>
+                    }
                     <p><small>@briefingRoom.Translate("DCPendingHelp")</small></p>
                     <button class="btn btn-primary form-control" @onclick="DownloadMission"><span class="oi oi-data-transfer-download"></span> @briefingRoom.Translate("DCDownloadMission")</button>
                     <br/><br/>
@@ -146,13 +153,21 @@
                                     <td>
                                         @DynamicCampaignText.AssetLabel(briefingRoom, state, target)
                                         <br/><small class="text-muted">@StrengthText(target)</small>
+                                        @if (state.GetAsset(sortie.DepartureId) is DCAsset departure)
+                                        {
+                                            <br/><small class="text-muted">@briefingRoom.Translate("DCDeparture"): @departure.Name</small>
+                                        }
                                         @if (!sortie.Suitable)
                                         {
                                             <br/><small class="text-warning">@briefingRoom.Translate("DCNotSuitable")</small>
                                         }
+                                        @if (sortie.Unavailable != null)
+                                        {
+                                            <br/><small class="text-danger">@briefingRoom.Translate(sortie.Unavailable)</small>
+                                        }
                                     </td>
                                     <td class="text-right">
-                                        <button class="btn btn-primary btn-sm" title="@DynamicCampaignText.SortieImpact(briefingRoom, state, sortie)" @onclick="() => GenerateMission(sortie)">@briefingRoom.Translate("DCGenerate")</button>
+                                        <button class="btn btn-primary btn-sm" disabled="@(sortie.Unavailable != null)" title="@DynamicCampaignText.SortieImpact(briefingRoom, state, sortie)" @onclick="() => GenerateMission(sortie)">@briefingRoom.Translate("DCGenerate")</button>
                                     </td>
                                 </tr>
                             }
@@ -180,6 +195,15 @@
                             <tbody>
                                 <tr><td>@briefingRoom.Translate("DCFrontStrength")</td><td>@forces.FrontStrength.ToString("0")%</td></tr>
                                 <tr><td>@briefingRoom.Translate("DCAirReadiness")</td><td>@forces.AirReadiness.ToString("0")%</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCFighters")</td><td>@forces.Fighters</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCAttackAircraft")</td><td>@forces.AttackAircraft</td></tr>
+                                @foreach (var (type, count) in forces.PlayerAircraft)
+                                {
+                                    <tr><td>@type</td><td>@count</td></tr>
+                                }
+                                <tr><td>@briefingRoom.Translate("DCAirToAirMissiles")</td><td>@forces.AirToAirMissiles</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCGuidedWeapons")</td><td>@forces.GuidedWeapons</td></tr>
+                                <tr><td>@briefingRoom.Translate("DCUnguidedWeapons")</td><td>@forces.UnguidedWeapons</td></tr>
                                 <tr><td>@briefingRoom.Translate("DCSupplies")</td><td>@forces.Supplies.ToString("0")</td></tr>
                                 <tr><td>@briefingRoom.Translate("DCFactories")</td><td>@forces.Factories</td></tr>
                                 <tr><td>@briefingRoom.Translate("DCDepots")</td><td>@forces.Depots</td></tr>
@@ -226,7 +250,10 @@
                         <tr class="@(asset.Coalition == state.PlayerCoalition ? "text-primary" : "text-danger")">
                             <td>@DynamicCampaignText.AssetLabel(briefingRoom, state, asset)</td>
                             <td>@asset.Strength.ToString("0")%</td>
-                            <td>@(asset.Kind == DCAssetKind.Depot || asset.Kind == DCAssetKind.Airbase ? asset.Stock.ToString("0") : "")</td>
+                            <td>
+                                @(asset.Kind == DCAssetKind.Depot || asset.Kind == DCAssetKind.Airbase ? asset.Stock.ToString("0") : "")
+                                <br/><small>@DynamicCampaignText.Stock(briefingRoom, asset)</small>
+                            </td>
                             <td>@AssetStatus(asset)</td>
                         </tr>
                     }

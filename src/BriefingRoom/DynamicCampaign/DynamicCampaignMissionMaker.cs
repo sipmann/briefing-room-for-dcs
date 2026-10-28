@@ -67,6 +67,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
         {
             if (state.Outcome != DCOutcome.Ongoing) return new();
             var template = LoadTemplate(briefingRoom, state);
+            DynamicCampaignInventory.EnsureInitialized(state, DynamicCampaignInventory.GetPlayerAircraft(template));
             var profile = ObjectivePresetSuitabilityProfile.FromPlayerFlightGroups(briefingRoom.Database, template.PlayerFlightGroups);
             return state.Assets
                 .Where(x => x.Coalition == state.EnemyCoalition && x.IsOperational)
@@ -76,12 +77,15 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 .Select(x =>
                 {
                     var preset = SORTIES[x.kind.Value].Preset;
+                    var departure = DynamicCampaignInventory.ChooseDeparture(state, state.PlayerAircraft, x.asset.Center);
                     return new DCSortie
                     {
                         Kind = x.kind.Value,
                         TargetId = x.asset.Id,
                         PresetId = preset,
-                        Suitable = ObjectivePresetSuitability.GetUnsuitabilityReason(briefingRoom.Database, preset, profile) == ObjectivePresetUnsuitabilityReason.None
+                        Suitable = ObjectivePresetSuitability.GetUnsuitabilityReason(briefingRoom.Database, preset, profile) == ObjectivePresetUnsuitabilityReason.None,
+                        DepartureId = departure?.Id,
+                        Unavailable = GetUnavailableReason(departure, x.kind.Value),
                     };
                 })
                 .OrderBy(x => x.Kind)
@@ -112,9 +116,11 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 throw new BriefingRoomException(database, briefingRoom.LanguageKey, "DynamicCampaignInvalidTarget");
 
             var campaignTemplate = LoadTemplate(briefingRoom, state);
-            var departure = state.GetAssets(state.PlayerCoalition, DCAssetKind.Airbase)
-                .Where(x => x.IsAlive)
-                .MinBy(x => x.Coordinates.GetDistanceFrom(target.Center));
+            DynamicCampaignInventory.EnsureInitialized(state, DynamicCampaignInventory.GetPlayerAircraft(campaignTemplate));
+            var departure = DynamicCampaignInventory.ChooseDeparture(state, state.PlayerAircraft, target.Center);
+            var unavailable = GetUnavailableReason(departure, sortie.Kind);
+            if (unavailable != null)
+                throw new BriefingRoomException(database, briefingRoom.LanguageKey, unavailable);
 
             DCSMission mission = null;
             Exception lastError = null;
@@ -146,11 +152,16 @@ namespace BriefingRoom4DCS.DynamicCampaign
             mission.SetValue("DateYear", state.Date.Year);
             mission.SetValue("BriefingDate", $"{state.Date.Day:00}/{state.Date.Month:00}/{state.Date.Year:0000}");
 
-            AddBriefingRemarks(briefingRoom, state, target, sortie.Kind, ref mission);
+            AddBriefingRemarks(briefingRoom, state, target, departure, sortie.Kind, ref mission);
 
             var token = Guid.NewGuid().ToString("N")[..12];
             var reporterLua = File.ReadAllText(REPORTER_LUA);
             GeneratorTools.ReplaceKey(ref reporterLua, "Token", token);
+            GeneratorTools.ReplaceKey(ref reporterLua, "Stock", string.Join(", ", DynamicCampaignInventory.WEAPONS.Select(x =>
+                $"{x} = {Math.Floor(DynamicCampaignInventory.Get(departure.Weapons, x))}")));
+            GeneratorTools.ReplaceKey(ref reporterLua, "StockLabels", string.Join(", ", DynamicCampaignInventory.WEAPONS.Select(x =>
+                $"{x} = \"{LuaText(briefingRoom.Translate($"DCWeapon{x}"))}\"")));
+            GeneratorTools.ReplaceKey(ref reporterLua, "StockWarning", LuaText(briefingRoom.Translate("DCStockWarning", departure.Name)));
             mission.AppendValue("ScriptMissionFeatures", reporterLua);
 
             state.Pending = new DCPendingMission
@@ -232,7 +243,9 @@ namespace BriefingRoom4DCS.DynamicCampaign
             };
         }
 
-        private static AmountNR GetAirForceLevel(DynamicCampaignState state, Coalition coalition) => GetAirReadiness(state, coalition) switch
+        // Fighters actually available (fleet x readiness, with missiles), relative to the initial fleet
+        private static AmountNR GetAirForceLevel(DynamicCampaignState state, Coalition coalition) =>
+            (DynamicCampaignInventory.GetFighterPower(state, coalition) / DynamicCampaignInventory.InitialFighters) switch
         {
             < 0.1 => AmountNR.None,
             < 0.3 => AmountNR.VeryLow,
@@ -240,6 +253,15 @@ namespace BriefingRoom4DCS.DynamicCampaign
             < 0.8 => AmountNR.Average,
             _ => AmountNR.High
         };
+
+        internal static string GetUnavailableReason(DCAsset departure, DCSortieKind kind)
+        {
+            if (departure == null) return "DCUnavailableNoAircraft";
+            if (!DynamicCampaignInventory.HasWeaponsFor(departure, kind)) return "DCUnavailableNoWeapons";
+            return null;
+        }
+
+        private static string LuaText(string text) => text.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", " ");
 
         private static Season GetSeason(int month) => month switch
         {
@@ -249,12 +271,13 @@ namespace BriefingRoom4DCS.DynamicCampaign
             _ => Season.Winter
         };
 
-        private static void AddBriefingRemarks(IBriefingRoom briefingRoom, DynamicCampaignState state, DCAsset target, DCSortieKind kind, ref DCSMission mission)
+        private static void AddBriefingRemarks(IBriefingRoom briefingRoom, DynamicCampaignState state, DCAsset target, DCAsset departure, DCSortieKind kind, ref DCSMission mission)
         {
             var remarks = new List<string>
             {
                 briefingRoom.Translate("DCBriefingDay", state.Turn, state.Name),
                 briefingRoom.Translate($"DCBriefingImpact{kind}", DynamicCampaignText.AssetLabel(briefingRoom, state, target)),
+                briefingRoom.Translate("DCBriefingStock", departure.Name, DynamicCampaignInventory.Describe(departure, briefingRoom.Translate)),
             };
             remarks.Reverse();
             foreach (var remark in remarks)

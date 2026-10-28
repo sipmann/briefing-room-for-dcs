@@ -92,6 +92,10 @@ namespace BriefingRoom4DCS.DynamicCampaign
         // Routes replaced by another one (re-routing, captured airbase)
         public bool Removed { get; set; }
 
+        // Weapons by category and aircraft by type/role held here (factories, depots, airbases)
+        public Dictionary<string, double> Weapons { get; set; }
+        public Dictionary<string, double> Aircraft { get; set; }
+
         public bool IsRoute => Kind == DCAssetKind.GroundRoute || Kind == DCAssetKind.AirRoute;
         public bool IsAlive => Strength >= DynamicCampaignRules.DESTROYED_THRESHOLD;
         public bool IsOperational => IsAlive && CutTurns == 0 && !Removed;
@@ -107,6 +111,9 @@ namespace BriefingRoom4DCS.DynamicCampaign
         public string TargetId { get; set; }
         public string PresetId { get; set; }
         public bool Suitable { get; set; } = true;
+        public string DepartureId { get; set; }
+        // Translation key of why it cannot be flown (no aircraft or weapons at the departure airbase), null if it can
+        public string Unavailable { get; set; }
     }
 
     public class DCPendingMission
@@ -152,6 +159,8 @@ namespace BriefingRoom4DCS.DynamicCampaign
         public bool MissionComplete { get; set; }
         public int PlayerAircraftLost { get; set; }
         public List<DCObjectiveResult> Objectives { get; set; } = new();
+        public Dictionary<string, double> WeaponsUsed { get; set; } = new();
+        public Dictionary<string, int> AircraftLost { get; set; } = new();
     }
 
     public class DCObjectiveResult
@@ -163,7 +172,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
 
     public class DynamicCampaignState
     {
-        public const int FORMAT_VERSION = 1;
+        public const int FORMAT_VERSION = 2;
 
         public int FormatVersion { get; set; } = FORMAT_VERSION;
         public string Id { get; set; }
@@ -181,6 +190,9 @@ namespace BriefingRoom4DCS.DynamicCampaign
         // The campaign template (.cbrt INI) the player set up: coalitions,
         // aircraft, options... reused for every generated mission.
         public string TemplateIni { get; set; }
+
+        // Player aircraft types (from the template) and how many a mission needs of each
+        public Dictionary<string, int> PlayerAircraft { get; set; } = new();
 
         public List<double[]> FrontLine { get; set; } = new();
         public List<DCAsset> Assets { get; set; } = new();

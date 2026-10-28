@@ -50,6 +50,36 @@ Strength and supplies are 0-100; an asset under `DESTROYED_THRESHOLD` is destroy
 Routes are never destroyed: they get cut (`CutTurns`) and recover. All tuning values
 are in `DynamicCampaignRules.cs`.
 
+## Weapons and aircraft (`DynamicCampaignInventory.cs`)
+
+Factories, depots and airbases hold `Weapons` by category (air-to-air, anti-radiation,
+air-to-ground missiles, guided bombs, bombs, rockets) and airbases hold `Aircraft`:
+AI fleets by role (`Fighter`, `Attack`) and the player's aircraft types (from the
+template's player flight groups, `state.PlayerAircraft`).
+
+- Production: each factory adds weapons and fractional aircraft per turn, scaled by its
+  strength; whole aircraft are ferried to the airbase that has the fewest of that type.
+- Distribution: weapons go factory > depot with the convoys, depot > rear airbase by road,
+  and to forward airbases with the cargo flights (shares scaled by route strength). Cutting a
+  route stops them like the supplies.
+- Player missions: the departure airbase is the closest one with enough aircraft of every
+  player type; a sortie is unavailable without them or without at least two weapons of the
+  categories it can use (`SORTIE_WEAPONS`). The departure stock goes in the briefing and in
+  the reporter script, which warns in game when the flight carries more than the stock.
+- Results: the reporter snapshots the weapons of the player's groups (player and AI
+  wingmen) at the first takeoff, classifies them from `Unit:getAmmo()` descriptors and
+  reports what was spent and which aircraft types were lost; both are taken from the
+  departure airbase.
+- AI: strike sorties need attack aircraft and air-to-ground weapons at an airbase and
+  consume them; the defender intercepts with its fighters (spending air-to-air missiles)
+  depending on its fighter power, which also sets the enemy/friendly CAP levels of the
+  generated missions. Airbase strikes destroy parked aircraft; destroyed depots and
+  factories lose their weapons, captured airbases lose everything.
+
+DCS warehouses are not limited: the `.miz` needs internal weapon ids (`wsType`) that the
+database does not have, so the campaign stock is enforced when picking missions and
+warned about in game, and consumption is read back from DCS.
+
 ## Initial layout (`DynamicCampaignBuilder.cs`)
 
 1. Situation: the template one if it has zones for both sides, else a random one of the
@@ -81,7 +111,7 @@ aircraft lost, and writes to `dcs.log` at start, every 60 s, on each objective
 completion and at mission end:
 
 ```
-BRDC|<token>|<sequence>|<missionTime>|<missionComplete 0/1>|<playerAircraftLost>|<dead>/<total>/<complete>,...
+BRDC|<token>|<sequence>|<missionTime>|<missionComplete 0/1>|<playerAircraftLost>|<dead>/<total>/<complete>,...|W:<category>=<used>;...|L:<type>=<lost>;...
 ```
 
 The parser keeps the highest sequence of the pending mission's token. No changes to

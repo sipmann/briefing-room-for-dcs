@@ -18,6 +18,7 @@ along with Briefing Room for DCS World. If not, see https://www.gnu.org/licenses
 ==========================================================================
 */
 
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -30,7 +31,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
     public static class DynamicCampaignLogParser
     {
         private static readonly Regex LINE_REGEX = new(
-            @"BRDC\|(?<token>[0-9a-f]{12})\|(?<seq>\d+)\|(?<time>\d+)\|(?<complete>[01])\|(?<lost>\d+)\|(?<objectives>[0-9/,]*)",
+            @"BRDC\|(?<token>[0-9a-f]{12})\|(?<seq>\d+)\|(?<time>\d+)\|(?<complete>[01])\|(?<lost>\d+)\|(?<objectives>[0-9/,]*)(\|W:(?<weapons>[A-Za-z0-9=;.]*))?(\|L:(?<types>[^|\s]*))?",
             RegexOptions.Compiled);
 
         public static DCMissionResult Parse(TextReader reader, string token)
@@ -63,10 +64,26 @@ namespace BriefingRoom4DCS.DynamicCampaign
                             Total = int.Parse(x[1], CultureInfo.InvariantCulture),
                             Complete = x[2] == "1",
                         })
-                        .ToList()
+                        .ToList(),
+                    WeaponsUsed = ParsePairs(match.Groups["weapons"].Value)
+                        .Where(x => DynamicCampaignInventory.WEAPONS.Contains(x.Key))
+                        .ToDictionary(x => x.Key, x => x.Value),
+                    AircraftLost = ParsePairs(match.Groups["types"].Value).ToDictionary(x => x.Key, x => (int)x.Value),
                 };
             }
             return latest;
+        }
+
+        private static Dictionary<string, double> ParsePairs(string text)
+        {
+            var pairs = new Dictionary<string, double>();
+            foreach (var pair in text.Split(';', System.StringSplitOptions.RemoveEmptyEntries))
+            {
+                var parts = pair.Split('=');
+                if (parts.Length == 2 && double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+                    pairs[parts[0]] = (pairs.TryGetValue(parts[0], out var existing) ? existing : 0) + value;
+            }
+            return pairs;
         }
 
         public static DCMissionResult Parse(string text, string token) => Parse(new StringReader(text), token);

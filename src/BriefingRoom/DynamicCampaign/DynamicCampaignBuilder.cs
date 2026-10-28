@@ -90,6 +90,8 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 layout.Build(airbases.Where(x => x.Coalition == coalition).ToList());
             }
 
+            DynamicCampaignInventory.EnsureInitialized(state, DynamicCampaignInventory.GetPlayerAircraft(template));
+
             state.Reports.Add(new DCTurnReport
             {
                 Turn = 0,
