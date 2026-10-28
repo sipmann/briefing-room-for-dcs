@@ -223,7 +223,8 @@ namespace BriefingRoom4DCS.Generator.UnitMaker
             SpawnPointType[] validTypes,
             Coordinates distanceOrigin1, MinMaxD distanceFrom1,
             Coordinates? distanceOrigin2 = null, MinMaxD? distanceFrom2 = null,
-            Coalition? coalition = null)
+            Coalition? coalition = null,
+            bool swappedOrigins = false)
         {
             var initialSearchRange = distanceFrom1 * Toolbox.NM_TO_METERS;
             var searchRange = initialSearchRange;
@@ -264,6 +265,11 @@ namespace BriefingRoom4DCS.Generator.UnitMaker
 
                 iterations++;
             } while (iterations < MAX_RADIUS_SEARCH_ITERATIONS);
+
+            // A narrow second range (e.g. an objective hint) is rarely hit by random points around the
+            // first origin: search around the second origin instead, keeping both constraints.
+            if (!swappedOrigins && distanceOrigin2.HasValue && distanceFrom2.HasValue)
+                return GetAirOrSeaCoordinates(mission, validTypes, distanceOrigin2.Value, distanceFrom2.Value, distanceOrigin1, distanceFrom1, coalition, true);
 
             return null;
         }
