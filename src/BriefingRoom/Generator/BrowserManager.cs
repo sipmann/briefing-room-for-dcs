@@ -282,8 +282,8 @@ namespace BriefingRoom4DCS.Generator
             // without a proper display driver (common in headless/server environments).
             chromiumArgs.Add("--disable-gpu");
 
-            if (BriefingRoom.RUNNING_IN_DOCKER)
-                chromiumArgs.Add("--single-process");
+            // No "--single-process" in Docker: Chrome 155+ crashes at startup with it,
+            // and "--no-sandbox" is enough to run in a container.
 
             return chromiumArgs.ToArray();
         }

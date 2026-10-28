@@ -378,11 +378,22 @@
     {
         await RunBusy(async () =>
         {
-            var miz = await Task.Run(async () =>
+            byte[] miz;
+            try
             {
-                var mission = DynamicCampaignService.GenerateMission(briefingRoom, state, sortie);
-                return await mission.SaveToMizBytes(briefingRoom.Database);
-            });
+                miz = await Task.Run(async () =>
+                {
+                    var mission = DynamicCampaignService.GenerateMission(briefingRoom, state, sortie);
+                    return await mission.SaveToMizBytes(briefingRoom.Database);
+                });
+            }
+            catch
+            {
+                // Generation sets the pending mission before the .miz exists: discard it
+                state = store.Load(state.Id);
+                await ShowCampaign(state);
+                throw;
+            }
             store.SaveMission(state.Id, miz);
             store.Save(state);
             await ShowCampaign(state);
