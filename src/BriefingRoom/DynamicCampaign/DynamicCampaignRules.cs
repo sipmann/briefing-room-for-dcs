@@ -48,6 +48,11 @@ namespace BriefingRoom4DCS.DynamicCampaign
         internal const double AIR_DEFENSE_REPAIR_COST = 6;
         internal const double AIR_DEFENSE_REPAIR = 10;
         internal const double AIR_DEFENSE_REBUILD_COST = 35;
+        // Destroyed radars (search or tracking, same weight): the site is blind until they are
+        // replaced. Counted down from the turn of the strike: two more missions without radars.
+        internal const int AIR_DEFENSE_RADAR_REPAIR_TURNS = 3;
+        internal const double AIR_DEFENSE_RADAR_REPAIR_COST = 8;   // per turn, from its depot
+        internal const double AIR_DEFENSE_UNIT_KILL_DAMAGE = 8;    // SAM unit destroyed around the target
         internal const double AIRBASE_UPKEEP = 10;
         internal const double AIRBASE_RECOVERY = 10;
         internal const double AIRBASE_DECAY = 12;
@@ -57,6 +62,10 @@ namespace BriefingRoom4DCS.DynamicCampaign
 
         // Player losses
         internal const double PLAYER_AIRCRAFT_LOSS_READINESS = 15;
+
+        // The enemy does not commit more air defenses than a flight of this size can face
+        internal const int SMALL_FLIGHT = 2;    // up to Average
+        internal const int MEDIUM_FLIGHT = 4;   // up to High
 
         // AI air operations
         internal const int MAX_AI_SORTIES = 4;

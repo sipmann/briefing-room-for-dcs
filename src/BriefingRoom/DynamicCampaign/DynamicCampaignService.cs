@@ -52,6 +52,10 @@ namespace BriefingRoom4DCS.DynamicCampaign
 
         public static void CancelMission(DynamicCampaignState state) => state.Pending = null;
 
+        // Careers of the players, from the debriefs of every campaign
+        public static List<DCPilotRecord> GetPilots(IEnumerable<DynamicCampaignState> campaigns) =>
+            DynamicCampaignPilots.GetPilots(campaigns);
+
         public static Dictionary<string, List<double[]>> GetMapData(IBriefingRoom briefingRoom, DynamicCampaignState state)
         {
             var data = new Dictionary<string, List<double[]>>

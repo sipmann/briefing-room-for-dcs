@@ -1,0 +1,103 @@
+@inject BriefingRoom4DCS.IBriefingRoom briefingRoom
+@using BriefingRoom4DCS.DynamicCampaign
+@using System.Linq
+
+@* Mission debrief of a dynamic campaign turn: pilots, weapons and timeline *@
+<details class="mb-2" open="@Open">
+    <summary>
+        <strong>@briefingRoom.Translate("DCDebrief")</strong>: @Debrief.MissionName &middot;
+        @briefingRoom.Translate("DCDebriefObjective", DynamicCampaignText.Percent(Debrief.ObjectivePercent)) &middot;
+        @briefingRoom.Translate("DCDebriefMissionTime") @DynamicCampaignText.Duration(Debrief.MissionTime)
+    </summary>
+    <table class="table table-sm mt-2">
+        <thead>
+            <tr>
+                <th>@briefingRoom.Translate("DCPilot")</th>
+                <th>@briefingRoom.Translate("DCStatus")</th>
+                <th>@briefingRoom.Translate("DCFlightTime")</th>
+                <th>@briefingRoom.Translate("DCShots")</th>
+                <th>@briefingRoom.Translate("DCHits")</th>
+                <th>@briefingRoom.Translate("DCAccuracy")</th>
+                <th>@briefingRoom.Translate("DCKills")</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var pilot in Debrief.Pilots)
+        {
+            <tr>
+                <td>
+                    @if (pilot.Ai)
+                    {
+                        @DynamicCampaignText.PilotName(briefingRoom, pilot)
+                    }
+                    else
+                    {
+                        <a href="DynamicCampaign/Pilots/@Uri.EscapeDataString(pilot.Name)"><strong>@pilot.Name</strong></a>
+                    }
+                    <br/><small class="text-muted">@pilot.Aircraft</small>
+                </td>
+                <td class="@(pilot.AircraftLost() ? "text-danger" : "")">
+                    @DynamicCampaignText.PilotStatus(briefingRoom, pilot.Status)
+                    @if (!string.IsNullOrEmpty(pilot.ShotDownBy))
+                    {
+                        <br/><small>@briefingRoom.Translate("DCShotDownBy", pilot.ShotDownBy)</small>
+                    }
+                </td>
+                <td>@DynamicCampaignText.Duration(pilot.FlightTime)</td>
+                <td>@pilot.Shots()</td>
+                <td>@pilot.Hits()</td>
+                <td>@DynamicCampaignText.Accuracy(pilot.Hits(), pilot.Shots())</td>
+                <td>
+                    <strong>@pilot.Kills.Total()</strong>
+                    <br/><small class="text-muted">@KillsText(pilot.Kills, pilot.FriendlyKills)</small>
+                </td>
+            </tr>
+            @if (pilot.Weapons.Count > 0)
+            {
+                <tr>
+                    <td></td>
+                    <td colspan="6">
+                        <WeaponsTable Weapons="pilot.Weapons" />
+                    </td>
+                </tr>
+            }
+        }
+        </tbody>
+    </table>
+    @if (Debrief.Events.Count > 0)
+    {
+        <h6>@briefingRoom.Translate("DCTimeline")</h6>
+        <ul class="list-unstyled small">
+            @foreach (var debriefEvent in Debrief.Events)
+            {
+                <li class="@EventClass(debriefEvent)"><span class="text-monospace">@DynamicCampaignText.ClockTime(debriefEvent.Time)</span> @DynamicCampaignText.DebriefEvent(briefingRoom, Debrief, debriefEvent)</li>
+            }
+        </ul>
+    }
+</details>
+
+@code {
+    [Parameter] public DCDebrief Debrief { get; set; }
+    [Parameter] public bool Open { get; set; }
+
+    private string KillsText(DCKillCount kills, int friendlyKills)
+    {
+        var parts = new List<string>();
+        void Add(int count, string key) { if (count > 0) parts.Add($"{briefingRoom.Translate(key)} {count}"); }
+        Add(kills.Air, "DCKillsAir");
+        Add(kills.Helicopter, "DCKillsHelicopter");
+        Add(kills.Ground, "DCKillsGround");
+        Add(kills.AirDefense, "DCKillsAirDefense");
+        Add(kills.Ship, "DCKillsShip");
+        Add(kills.Structure, "DCKillsStructure");
+        Add(friendlyKills, "DCFriendlyKills");
+        return string.Join(" · ", parts);
+    }
+
+    private static string EventClass(DCDebriefEvent debriefEvent) => debriefEvent.Kind switch
+    {
+        "Kill" => "text-success",
+        "FriendlyKill" or "ShotDown" or "Ejected" or "Killed" or "Lost" => "text-danger",
+        _ => ""
+    };
+}

@@ -18,7 +18,10 @@ along with Briefing Room for DCS World. If not, see https://www.gnu.org/licenses
 ==========================================================================
 */
 
+using System;
+using System.Globalization;
 using System.Linq;
+using BriefingRoom4DCS.Template;
 
 namespace BriefingRoom4DCS.DynamicCampaign
 {
@@ -67,5 +70,48 @@ namespace BriefingRoom4DCS.DynamicCampaign
 
         public static string Side(IBriefingRoom briefingRoom, DynamicCampaignState state, Coalition? coalition) =>
             coalition == null ? "" : briefingRoom.Translate(coalition == state.PlayerCoalition ? "DCSideAlly" : "DCSideEnemy");
+
+        public static string Threat(IBriefingRoom briefingRoom, AmountNR threat) => briefingRoom.Translate($"DCThreat{threat}");
+
+        public static string PilotStatus(IBriefingRoom briefingRoom, string status) =>
+            briefingRoom.Translate($"DCPilotStatus{(string.IsNullOrEmpty(status) ? "OnGround" : status)}");
+
+        public static string PilotName(IBriefingRoom briefingRoom, DCPilotDebrief pilot) =>
+            pilot.Ai ? $"{pilot.Name} {briefingRoom.Translate("DCAIPilot")}" : pilot.Name;
+
+        // Seconds as h:mm
+        public static string Duration(double seconds)
+        {
+            var time = TimeSpan.FromSeconds(Math.Max(0, seconds));
+            return $"{(int)time.TotalHours}:{time.Minutes:00}";
+        }
+
+        // DCS absolute time (seconds since midnight of the first day) as hh:mm:ss
+        public static string ClockTime(double seconds)
+        {
+            var time = TimeSpan.FromSeconds(Math.Max(0, seconds));
+            return $"{time.Hours:00}:{time.Minutes:00}:{time.Seconds:00}";
+        }
+
+        public static string Percent(double value) => $"{Math.Round(value).ToString(CultureInfo.InvariantCulture)}%";
+
+        public static string Accuracy(int hits, int shots) => shots == 0 ? "-" : Percent(100.0 * hits / shots);
+
+        public static string WeaponCategory(IBriefingRoom briefingRoom, string category) =>
+            string.IsNullOrEmpty(category) ? "" : briefingRoom.Translate($"DCWeapon{category}");
+
+        public static string DebriefEvent(IBriefingRoom briefingRoom, DCDebrief debrief, DCDebriefEvent debriefEvent)
+        {
+            var pilot = debrief.Pilots.FirstOrDefault(x => x.Key == debriefEvent.Pilot);
+            var pilotName = pilot == null ? debriefEvent.Pilot : PilotName(briefingRoom, pilot);
+            var unknown = briefingRoom.Translate("DCUnknown");
+            var weapon = string.IsNullOrEmpty(debriefEvent.Weapon) || debriefEvent.Weapon == "?" ? unknown : debriefEvent.Weapon;
+            var target = string.IsNullOrEmpty(debriefEvent.Target) || debriefEvent.Target == "?" ? unknown : debriefEvent.Target;
+            var key = $"DCDebriefEvent{debriefEvent.Kind}";
+            // Bombs and rockets have no target, airfields may be unknown
+            if (string.IsNullOrEmpty(debriefEvent.Target) && (debriefEvent.Kind == "Shot" || debriefEvent.Kind == "Takeoff" || debriefEvent.Kind == "Landing"))
+                key += "NoTarget";
+            return briefingRoom.Translate(key, pilotName, weapon, target);
+        }
     }
 }

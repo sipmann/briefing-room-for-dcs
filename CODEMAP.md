@@ -164,9 +164,10 @@ DynamicCampaign/
 ├── DynamicCampaignRules.cs       # Tuning values
 ├── DynamicCampaignBuilder.cs     # Initial layout of both coalitions + front line
 ├── DynamicCampaignMissionMaker.cs# Sortie -> MissionTemplate -> DCSMission + reporter script
-├── DynamicCampaignLogParser.cs   # Reads the BRDC| lines from dcs.log
+├── DynamicCampaignLogParser.cs   # Reads the BRDC| (result) and BRDCS| (debrief) lines from dcs.log
 ├── DynamicCampaignInventory.cs   # Weapons and aircraft stock: production, transport, use
 ├── DynamicCampaignSimulator.cs   # Turn resolution: logistics, AI air ops, ground war
+├── DynamicCampaignPilots.cs      # Pilot careers summed from the mission debriefs
 ├── DynamicCampaignStore.cs       # One JSON file per campaign (BR_CAMPAIGNS_DIR)
 └── DynamicCampaignText.cs        # Translated labels and events
 ```

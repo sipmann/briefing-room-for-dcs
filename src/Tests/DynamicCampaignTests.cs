@@ -16,10 +16,11 @@ public class DynamicCampaignTests
         this.fixture = fixture;
     }
 
-    private (BriefingRoom briefingRoom, DynamicCampaignState state) CreateCampaign(string theater = "Caucasus", int seed = 1234)
+    private (BriefingRoom briefingRoom, DynamicCampaignState state) CreateCampaign(string theater = "Caucasus", int seed = 1234, string aircraft = null)
     {
         var briefingRoom = new BriefingRoom(fixture.Db);
         var template = new CampaignTemplate(briefingRoom, Path.Combine(BriefingRoom.GetBriefingRoomRootPath(), "testTemplates", "Test.cbrt"));
+        if (aircraft != null) template.PlayerFlightGroups.ForEach(x => x.Aircraft = aircraft);
         template.ContextTheater = theater;
         template.ContextSituation = "";
         template.RandomSeed = seed;
@@ -108,6 +109,7 @@ public class DynamicCampaignTests
             Assert.Contains($"briefingRoom.dynamicCampaign.token = \"{state.Pending.Token}\"", scripts);
             Assert.DoesNotContain("$TOKEN$", scripts);
             Assert.DoesNotContain("$ENDMISSIONLABEL$", scripts);
+            Assert.DoesNotContain("$RADARSDOWN$", scripts);
         }
         Assert.True(failures.Count == 0, string.Join("\n", failures));
     }
@@ -323,5 +325,185 @@ public class DynamicCampaignTests
         Assert.Equal(14, result.WeaponsUsed["Rocket"]);
         Assert.False(result.WeaponsUsed.ContainsKey("Junk"));
         Assert.Equal(1, result.AircraftLost["FA-18C_hornet"]);
+    }
+
+    private const string DEBRIEF_JSON = """{"pilots":[{"key":"P:Sipmann","name":"Sipmann","ai":false,"aircraft":"F-16C_50","takeoffs":1,"landings":1,"flightTime":3725,"status":"Landed","hitsTaken":0,"friendlyKills":0,"shotDownBy":"","kills":{"air":0,"helicopter":0,"ground":1,"airDefense":2,"ship":0,"structure":0},"weapons":[{"name":"AGM-88C HARM","category":"ARM","gun":false,"shots":2,"hits":2,"kills":2},{"name":"M61A1","category":"Gun","gun":true,"shots":0,"hits":40,"kills":1}]},{"key":"A:Viper-2","name":"Enfield12","ai":true,"aircraft":"F-16C_50","takeoffs":1,"landings":0,"flightTime":1800,"status":"Ejected","hitsTaken":1,"friendlyKills":0,"shotDownBy":"SA-11 Buk LN 9A310M1","kills":{"air":0,"helicopter":0,"ground":0,"airDefense":0,"ship":0,"structure":0},"weapons":[{"name":"AGM-88C HARM","category":"ARM","gun":false,"shots":2,"hits":0,"kills":0}]}],"events":[{"time":43200,"pilot":"P:Sipmann","kind":"Takeoff","weapon":"","target":"Kutaisi"},{"time":44000,"pilot":"P:Sipmann","kind":"Shot","weapon":"AGM-88C HARM","target":"SA-11 Buk SR 9S18M1"},{"time":44030,"pilot":"P:Sipmann","kind":"Kill","weapon":"AGM-88C HARM","target":"SA-11 Buk SR 9S18M1"},{"time":44100,"pilot":"A:Viper-2","kind":"ShotDown","weapon":"SA-11","target":"SA-11 Buk LN 9A310M1"},{"time":44200,"pilot":"P:Sipmann","kind":"Shot","weapon":"Mk-82","target":""}],"airDefenseKills":[{"x":-1000,"y":2000,"radar":true}]}""";
+
+    [Fact]
+    public void ParsesSiteResultsAndDebrief()
+    {
+        var log = new StringBuilder()
+            .AppendLine("2026-10-28 20:10:00.000 INFO    SCRIPTING (Main): BRDC|0123456789ab|3|600|0|1|1/2/0/3/8|W:ARM=4|L:F-16C_50=1")
+            .AppendLine("2026-10-28 20:10:00.000 INFO    SCRIPTING (Main): BRDCS|0123456789ab|3|" + DEBRIEF_JSON)
+            .AppendLine("2026-10-28 20:05:00.000 INFO    SCRIPTING (Main): BRDCS|0123456789ab|2|{\"pilots\":[],\"events\":[],\"airDefenseKills\":[]}")
+            .AppendLine("2026-10-28 20:06:00.000 INFO    SCRIPTING (Main): BRDCS|0123456789ab|4|{broken")
+            .ToString();
+
+        var result = DynamicCampaignLogParser.Parse(log, "0123456789ab")!;
+
+        var objective = Assert.Single(result.Objectives);
+        Assert.Equal((1, 2, 3, 8), (objective.Dead, objective.Total, objective.SiteDead, objective.SiteTotal));
+        Assert.Equal(2, result.Pilots.Count);
+        var pilot = result.Pilots[0];
+        Assert.Equal("Sipmann", pilot.Name);
+        Assert.False(pilot.Ai);
+        Assert.Equal(3, pilot.Kills.Total());
+        Assert.Equal(2, pilot.Shots()); // Gun bursts are not shots
+        Assert.Equal(2, pilot.Hits());
+        Assert.True(result.Pilots[1].AircraftLost());
+        Assert.Equal(5, result.Events.Count);
+        var kill = Assert.Single(result.AirDefenseKills);
+        Assert.True(kill.Radar);
+        Assert.Equal(-1000, kill.X);
+
+        // Reports of older missions: the site is the objective
+        var old = DynamicCampaignLogParser.Parse("BRDC|0123456789ab|1|60|0|0|2/4/0", "0123456789ab")!;
+        Assert.Equal((2, 4), (old.Objectives[0].SiteDead, old.Objectives[0].SiteTotal));
+        Assert.Empty(old.Pilots);
+    }
+
+    [Fact]
+    public void DestroyedRadarsBlindTheSiteForTwoMissions()
+    {
+        var (briefingRoom, state) = CreateCampaign();
+        var site = state.GetAssets(state.EnemyCoalition, DCAssetKind.AirDefense).First();
+        state.GetAsset(site.SupplierId)!.Stock = 100;
+        var coverBefore = DynamicCampaignMissionMaker.GetAirDefenseCover(state, state.EnemyCoalition, site.Coordinates);
+        state.Pending = new DCPendingMission { Token = "0123456789ab", TargetId = site.Id, Kind = DCSortieKind.SEAD, Turn = state.Turn };
+
+        // The search radar only (1 of 2 radars), 1 unit of a site of 8
+        DynamicCampaignService.ResolveTurn(state, new DCMissionResult { Objectives = new() { new DCObjectiveResult { Dead = 1, Total = 2, SiteDead = 1, SiteTotal = 8 } } });
+
+        Assert.Equal(DynamicCampaignRules.AIR_DEFENSE_RADAR_REPAIR_TURNS - 1, site.RadarRepairTurns);
+        Assert.InRange(site.Strength, 80, 100);
+        Assert.Contains(state.Reports.Last().Events, x => x.Key == "DCEventRadarsDown" && x.Args.Contains($"@{site.Id}"));
+        Assert.True(DynamicCampaignMissionMaker.GetAirDefenseCover(state, state.EnemyCoalition, site.Coordinates) < coverBefore);
+        Assert.Contains(DynamicCampaignService.GetSorties(briefingRoom, state), x => x.TargetId == site.Id);
+
+        // Next mission: the site is spawned without radars, its launchers are the objective
+        state.Pending = new DCPendingMission { Token = "0123456789ab", TargetId = site.Id, Kind = DCSortieKind.SEAD, Turn = state.Turn, RadarsDown = true };
+        state.GetAsset(site.SupplierId)!.Stock = 100;
+        DynamicCampaignService.ResolveTurn(state, new DCMissionResult { Objectives = new() { new DCObjectiveResult { Dead = 2, Total = 6, SiteDead = 2, SiteTotal = 6 } } });
+        Assert.True(site.RadarsDown);
+
+        state.GetAsset(site.SupplierId)!.Stock = 100;
+        DynamicCampaignService.SkipTurn(state);
+        Assert.False(site.RadarsDown);
+        Assert.Contains(state.Reports.Last().Events, x => x.Key == "DCEventRadarsRepaired" && x.Args.Contains($"@{site.Id}"));
+    }
+
+    [Fact]
+    public void BlindSiteDestroyedWhenAllLaunchersAreKilled()
+    {
+        var (_, state) = CreateCampaign();
+        var site = state.GetAssets(state.EnemyCoalition, DCAssetKind.AirDefense).First();
+        site.RadarRepairTurns = 2;
+        state.Pending = new DCPendingMission { Token = "0123456789ab", TargetId = site.Id, Kind = DCSortieKind.SEAD, Turn = state.Turn, RadarsDown = true };
+
+        DynamicCampaignService.ResolveTurn(state, new DCMissionResult { Objectives = new() { new DCObjectiveResult { Dead = 6, Total = 6, Complete = true, SiteDead = 6, SiteTotal = 6 } } });
+
+        Assert.False(site.IsAlive);
+        Assert.Contains(state.Reports.Last().Events, x => x.Key == "DCEventAssetDestroyed" && x.Args.Contains($"@{site.Id}"));
+    }
+
+    [Fact]
+    public void AirDefenseKillsAroundTheTargetHurtTheNearestCampaignSite()
+    {
+        var (_, state) = CreateCampaign();
+        var sites = state.GetAssets(state.EnemyCoalition, DCAssetKind.AirDefense).ToList();
+        // A depot covered by a SAM site: kills near that site are taken from it
+        var site = sites.First();
+        var target = state.GetAssets(state.EnemyCoalition, DCAssetKind.Depot)
+            .MinBy(x => x.Coordinates.GetDistanceFrom(site.Coordinates))!;
+        Assert.True(target.Coordinates.GetDistanceFrom(site.Coordinates) < DynamicCampaignRules.AIR_DEFENSE_COVER_KM * 1000);
+        var nearest = sites.Where(x => x.Coordinates.GetDistanceFrom(target.Center) < DynamicCampaignRules.AIR_DEFENSE_COVER_KM * 1000)
+            .MinBy(x => x.Coordinates.GetDistanceFrom(new Coordinates(site.X + 500, site.Y)))!;
+        state.Pending = new DCPendingMission { Token = "0123456789ab", TargetId = target.Id, Kind = DCSortieKind.StrikeDepot, Turn = state.Turn };
+
+        DynamicCampaignService.ResolveTurn(state, new DCMissionResult
+        {
+            Objectives = new() { new DCObjectiveResult { Dead = 0, Total = 4 } },
+            AirDefenseKills = new()
+            {
+                new DCAirDefenseKill { X = site.X + 500, Y = site.Y, Radar = true },
+                new DCAirDefenseKill { X = site.X + 500, Y = site.Y, Radar = false },
+            },
+        });
+
+        Assert.True(nearest.RadarsDown);
+        Assert.Contains(state.Reports.Last().Events, x => x.Key == "DCEventAirDefenseUnitsDestroyed" && x.Args.SequenceEqual(new[] { $"@{nearest.Id}", "2" }));
+    }
+
+    [Fact]
+    public void EnemyAirDefensesAreCappedByTheFlightSize()
+    {
+        var (briefingRoom, state) = CreateCampaign();
+        var sorties = DynamicCampaignService.GetSorties(briefingRoom, state);
+        // Test template: 2 aircraft
+        Assert.Equal(2, state.PlayerAircraft.Values.Sum());
+        Assert.All(sorties, x => Assert.True(x.Threat <= AmountNR.Average));
+
+        // Every site of the coalition in one spot: the uncapped level is the highest
+        var site = state.GetAssets(state.EnemyCoalition, DCAssetKind.AirDefense).First();
+        foreach (var other in state.GetAssets(state.EnemyCoalition, DCAssetKind.AirDefense)) { other.X = site.X; other.Y = site.Y; }
+        Assert.Equal(AmountNR.VeryHigh, DynamicCampaignMissionMaker.GetAirDefenseLevel(state, state.EnemyCoalition, site.Coordinates));
+        Assert.Equal(AmountNR.Average, DynamicCampaignMissionMaker.GetEnemyAirDefenseLevel(state, site.Coordinates));
+        state.PlayerAircraft = state.PlayerAircraft.ToDictionary(x => x.Key, _ => 4);
+        Assert.Equal(AmountNR.High, DynamicCampaignMissionMaker.GetEnemyAirDefenseLevel(state, site.Coordinates));
+        state.PlayerAircraft = state.PlayerAircraft.ToDictionary(x => x.Key, _ => 6);
+        Assert.Equal(AmountNR.VeryHigh, DynamicCampaignMissionMaker.GetEnemyAirDefenseLevel(state, site.Coordinates));
+    }
+
+    [Fact]
+    public void MissionDebriefIsKeptAndSummedInThePilotCareer()
+    {
+        var (briefingRoom, state) = CreateCampaign();
+        var result = DynamicCampaignLogParser.Parse("BRDC|0123456789ab|3|600|0|1|1/2/0/3/8\nBRDCS|0123456789ab|3|" + DEBRIEF_JSON, "0123456789ab")!;
+        for (var mission = 0; mission < 2; mission++)
+        {
+            var site = state.GetAssets(state.EnemyCoalition, DCAssetKind.AirDefense).First(x => x.IsAlive);
+            state.Pending = new DCPendingMission { Token = "0123456789ab", TargetId = site.Id, Kind = DCSortieKind.SEAD, Turn = state.Turn, MissionName = $"Operation {mission}" };
+            DynamicCampaignService.ResolveTurn(state, result);
+        }
+        DynamicCampaignService.SkipTurn(state);
+
+        var debrief = state.Reports[^2].Debrief!;
+        Assert.Equal("Operation 1", debrief.MissionName);
+        Assert.Equal(38, debrief.ObjectivePercent); // 3 of 8 units of the site
+        Assert.Null(state.Reports.Last().Debrief);
+        var loaded = DynamicCampaignStore.Deserialize(DynamicCampaignStore.Serialize(state));
+        Assert.Equal(2, loaded.Reports[^2].Debrief!.Pilots.Count);
+
+        var pilot = Assert.Single(DynamicCampaignService.GetPilots(new[] { loaded })); // AI wingmen have no career
+        Assert.Equal("Sipmann", pilot.Name);
+        Assert.Equal(2, pilot.Missions);
+        Assert.Equal(6, pilot.Kills.Total());
+        Assert.Equal(4, pilot.Kills.AirDefense);
+        Assert.Equal(100, pilot.Accuracy);
+        Assert.Equal(2, pilot.Aircraft["F-16C_50"]);
+        Assert.Equal(4, pilot.Weapons.First(x => x.Name == "AGM-88C HARM").Kills);
+        Assert.Equal(2, pilot.History.Count);
+        Assert.Equal("2:04", DynamicCampaignText.Duration(pilot.FlightTime));
+
+        foreach (var debriefEvent in debrief.Events)
+            Assert.DoesNotContain("ERR_", DynamicCampaignText.DebriefEvent(briefingRoom, debrief, debriefEvent));
+        Assert.Contains("Enfield12 (AI)", DynamicCampaignText.DebriefEvent(briefingRoom, debrief, debrief.Events[3]));
+        foreach (var status in new[] { "OnGround", "Airborne", "Landed", "Ejected", "Killed", "Lost" })
+            Assert.DoesNotContain("ERR_", DynamicCampaignText.PilotStatus(briefingRoom, status));
+        foreach (var threat in Enum.GetValues<AmountNR>().Where(x => x != AmountNR.Random))
+            Assert.DoesNotContain("ERR_", DynamicCampaignText.Threat(briefingRoom, threat));
+    }
+
+    [Fact]
+    public void ViperFlightPlanHasASteerpointOverTheDepartureAirbase()
+    {
+        var (briefingRoom, state) = CreateCampaign(aircraft: "F-16C_50");
+        var sortie = DynamicCampaignService.GetSorties(briefingRoom, state).First(x => x.Unavailable == null && x.Kind == DCSortieKind.StrikeDepot);
+        var mission = DynamicCampaignService.GenerateMission(briefingRoom, state, sortie);
+
+        // The F-16 has no steerpoint 0: steerpoint 1 is the departure airbase, the target comes after
+        var waypoints = mission.Briefing.FlightBriefings.First().Waypoints;
+        Assert.StartsWith($"1: {mission.PlayerAirbase.UIDisplayName.Get(mission.LangKey).ToUpper()}", waypoints[1]);
+        Assert.Contains(waypoints.Skip(2), x => x.Contains("[TARGET]"));
     }
 }

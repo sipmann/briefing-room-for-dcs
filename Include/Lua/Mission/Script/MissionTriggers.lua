@@ -99,20 +99,27 @@ function briefingRoom.mission.objectivesTriggersCommon.isMissionOrObjectiveCompl
   return briefingRoom.mission.complete or briefingRoom.mission.objectives[objectiveIndex].complete
 end
 
+-- attribute: one DCS attribute, or a table of attributes (a unit matches if it has any of them)
 function briefingRoom.mission.objectivesTriggersCommon.filterTargets(objectiveIndex, attribute, inverse)
   inverse = inverse or false
+  local attributes = attribute
+  if type(attributes) ~= "table" then attributes = { attribute } end
   do
     local newTargetTable = { }
-    
+
     for _,i in ipairs(briefingRoom.mission.objectives[objectiveIndex].unitNames) do
       local unit = Unit.getByName(i)
       if unit ~= nil then
-        if inverse and not unit:hasAttribute(attribute) then
+        local hasAttribute = false
+        for _, a in ipairs(attributes) do
+          if unit:hasAttribute(a) then hasAttribute = true end
+        end
+        if inverse and not hasAttribute then
           table.insert(newTargetTable, i)
         end
-        if not inverse and unit:hasAttribute(attribute) then
+        if not inverse and hasAttribute then
           table.insert(newTargetTable, i)
-        end 
+        end
       end
     end
   

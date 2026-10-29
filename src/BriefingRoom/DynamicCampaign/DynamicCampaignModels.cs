@@ -21,6 +21,7 @@ along with Briefing Room for DCS World. If not, see https://www.gnu.org/licenses
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using BriefingRoom4DCS.Template;
 
 namespace BriefingRoom4DCS.DynamicCampaign
 {
@@ -96,9 +97,14 @@ namespace BriefingRoom4DCS.DynamicCampaign
         public Dictionary<string, double> Weapons { get; set; }
         public Dictionary<string, double> Aircraft { get; set; }
 
+        // SAM sites: turns before destroyed radars (search or tracking) are replaced.
+        // Meanwhile the site covers nothing and is spawned without radars.
+        public int RadarRepairTurns { get; set; }
+
         public bool IsRoute => Kind == DCAssetKind.GroundRoute || Kind == DCAssetKind.AirRoute;
         public bool IsAlive => Strength >= DynamicCampaignRules.DESTROYED_THRESHOLD;
         public bool IsOperational => IsAlive && CutTurns == 0 && !Removed;
+        public bool RadarsDown => RadarRepairTurns > 0;
 
         internal Coordinates Coordinates => new(X, Y);
         internal Coordinates Coordinates2 => new(X2, Y2);
@@ -114,6 +120,8 @@ namespace BriefingRoom4DCS.DynamicCampaign
         public string DepartureId { get; set; }
         // Translation key of why it cannot be flown (no aircraft or weapons at the departure airbase), null if it can
         public string Unavailable { get; set; }
+        // Enemy air defenses the mission will have around the target
+        public AmountNR Threat { get; set; }
     }
 
     public class DCPendingMission
@@ -125,6 +133,8 @@ namespace BriefingRoom4DCS.DynamicCampaign
         public string DepartureId { get; set; }
         public string MissionName { get; set; }
         public DateTime GeneratedUtc { get; set; }
+        // SAM site target spawned without its radars: the objective is the rest of the site
+        public bool RadarsDown { get; set; }
     }
 
     // A narrative event, translated when displayed (key from Database/Language/DynamicCampaign)
@@ -148,6 +158,8 @@ namespace BriefingRoom4DCS.DynamicCampaign
         public int Turn { get; set; }
         public DateTime Date { get; set; }
         public List<DCEvent> Events { get; set; } = new();
+        // What the pilots did in the player mission of this turn (null if not flown or no debrief in the log)
+        public DCDebrief Debrief { get; set; }
     }
 
     // What came back from DCS for one mission
@@ -161,6 +173,10 @@ namespace BriefingRoom4DCS.DynamicCampaign
         public List<DCObjectiveResult> Objectives { get; set; } = new();
         public Dictionary<string, double> WeaponsUsed { get; set; } = new();
         public Dictionary<string, int> AircraftLost { get; set; } = new();
+        public List<DCPilotDebrief> Pilots { get; set; } = new();
+        public List<DCDebriefEvent> Events { get; set; } = new();
+        // Enemy medium/long range SAM units destroyed outside the objective
+        public List<DCAirDefenseKill> AirDefenseKills { get; set; } = new();
     }
 
     public class DCObjectiveResult
@@ -168,6 +184,93 @@ namespace BriefingRoom4DCS.DynamicCampaign
         public int Dead { get; set; }
         public int Total { get; set; }
         public bool Complete { get; set; }
+        // Every unit of the target groups (SAM site: launchers and radars), same as Dead/Total in older reports
+        public int SiteDead { get; set; }
+        public int SiteTotal { get; set; }
+    }
+
+    public class DCAirDefenseKill
+    {
+        public double X { get; set; }
+        public double Y { get; set; }
+        public bool Radar { get; set; }
+    }
+
+    // ---------------------------------------------------------------- Debrief
+
+    public class DCDebrief
+    {
+        public string MissionName { get; set; }
+        public DCSortieKind Kind { get; set; }
+        public string TargetId { get; set; }
+        public double ObjectivePercent { get; set; }
+        public double MissionTime { get; set; }
+        public List<DCPilotDebrief> Pilots { get; set; } = new();
+        public List<DCDebriefEvent> Events { get; set; } = new();
+    }
+
+    public class DCPilotDebrief
+    {
+        public string Key { get; set; }
+        public string Name { get; set; }
+        public bool Ai { get; set; }
+        public string Aircraft { get; set; }
+        public int Takeoffs { get; set; }
+        public int Landings { get; set; }
+        public double FlightTime { get; set; } // seconds
+        public string Status { get; set; } // OnGround, Airborne, Landed, Ejected, Killed, Lost
+        public int HitsTaken { get; set; }
+        public int FriendlyKills { get; set; }
+        public string ShotDownBy { get; set; }
+        public DCKillCount Kills { get; set; } = new();
+        public List<DCWeaponDebrief> Weapons { get; set; } = new();
+
+        // Accuracy is counted on missiles, bombs and rockets: every shell is a hit, bursts are not shots
+        public int Shots() => Weapons.Where(x => !x.Gun).Sum(x => x.Shots);
+        public int Hits() => Weapons.Where(x => !x.Gun).Sum(x => Math.Min(x.Hits, x.Shots));
+        public bool AircraftLost() => Status == "Ejected" || Status == "Killed" || Status == "Lost";
+    }
+
+    public class DCKillCount
+    {
+        public int Air { get; set; }
+        public int Helicopter { get; set; }
+        public int Ground { get; set; }
+        public int AirDefense { get; set; }
+        public int Ship { get; set; }
+        public int Structure { get; set; }
+
+        public int Total() => Air + Helicopter + Ground + AirDefense + Ship + Structure;
+
+        public void Add(DCKillCount other)
+        {
+            if (other == null) return;
+            Air += other.Air;
+            Helicopter += other.Helicopter;
+            Ground += other.Ground;
+            AirDefense += other.AirDefense;
+            Ship += other.Ship;
+            Structure += other.Structure;
+        }
+    }
+
+    public class DCWeaponDebrief
+    {
+        public string Name { get; set; }
+        public string Category { get; set; } // DynamicCampaignInventory.WEAPONS, "Gun" or empty
+        public bool Gun { get; set; }
+        public int Shots { get; set; }
+        public int Hits { get; set; }
+        public int Kills { get; set; }
+    }
+
+    public class DCDebriefEvent
+    {
+        public double Time { get; set; } // DCS absolute time, seconds since midnight
+        public string Pilot { get; set; } // DCPilotDebrief.Key
+        public string Kind { get; set; } // Takeoff, Landing, Shot, Kill, FriendlyKill, ShotDown, Ejected, Killed, Lost
+        public string Weapon { get; set; }
+        public string Target { get; set; }
     }
 
     public class DynamicCampaignState

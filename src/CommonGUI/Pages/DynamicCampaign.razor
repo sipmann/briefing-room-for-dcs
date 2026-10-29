@@ -97,6 +97,7 @@
         {
             <div class="generator-block">
                 <button class="btn btn-secondary btn-sm float-right" @onclick="CloseCampaign"><span class="oi oi-arrow-left"></span> @briefingRoom.Translate("DCBack")</button>
+                <a class="btn btn-outline-secondary btn-sm float-right mr-2" href="DynamicCampaign/Pilots"><span class="oi oi-person"></span> @briefingRoom.Translate("DCPilots")</a>
                 <h3>@state.Name</h3>
                 <p>
                     @briefingRoom.Translate("DCTurn") <strong>@state.Turn</strong> &middot;
@@ -153,6 +154,11 @@
                                     <td>
                                         @DynamicCampaignText.AssetLabel(briefingRoom, state, target)
                                         <br/><small class="text-muted">@StrengthText(target)</small>
+                                        <br/><small class="text-muted">@briefingRoom.Translate("DCThreat"): @DynamicCampaignText.Threat(briefingRoom, sortie.Threat)</small>
+                                        @if (target.RadarsDown)
+                                        {
+                                            <br/><small class="text-success">@briefingRoom.Translate("DCRadarsDown", target.RadarRepairTurns)</small>
+                                        }
                                         @if (state.GetAsset(sortie.DepartureId) is DCAsset departure)
                                         {
                                             <br/><small class="text-muted">@briefingRoom.Translate("DCDeparture"): @departure.Name</small>
@@ -225,6 +231,10 @@
                 {
                     <div class="generator-block">
                         <h5>@briefingRoom.Translate("DCTurn") @report.Turn &middot; @report.Date.ToString("d", CultureInfo.CurrentCulture)</h5>
+                        @if (report.Debrief != null)
+                        {
+                            <DynamicCampaignDebrief Debrief="report.Debrief" Open="report == state.Reports.Last()" />
+                        }
                         <ul>
                             @foreach (var campaignEvent in report.Events)
                             {
@@ -508,6 +518,7 @@
     {
         if (asset.IsRoute && asset.CutTurns > 0) return $"{briefingRoom.Translate("DCCut")} ({asset.CutTurns})";
         if (!asset.IsAlive && !asset.IsRoute) return briefingRoom.Translate("DCDestroyed");
+        if (asset.RadarsDown) return briefingRoom.Translate("DCRadarsDown", asset.RadarRepairTurns);
         return briefingRoom.Translate("DCOperational");
     }
 

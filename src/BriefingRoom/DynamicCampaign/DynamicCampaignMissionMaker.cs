@@ -45,7 +45,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
             { DCSortieKind.StrikeFactory, new("DeepStrike", "StructureProduction", "Idle", "DestroyAll") },
             { DCSortieKind.StrikeDepot, new("DeepStrike", "StructureMilitary", "Idle", "DestroyAll") },
             { DCSortieKind.CloseAirSupport, new("CloseAirSupport", null, "Idle", null) },
-            { DCSortieKind.SEAD, new("DEAD", "AirDefenseSAMMediumLong", "Idle", "DestroyTrackingRadars") },
+            { DCSortieKind.SEAD, new("DEAD", "AirDefenseSAMMediumLong", "Idle", "DestroyRadars") },
             { DCSortieKind.InterdictConvoy, new("Interdiction", "VehicleTransport", "PatrollingOnRoads", "DestroyAll") },
             { DCSortieKind.InterceptCargo, new("Interception", "PlaneTransport", "Patrolling", "DestroyAll") },
             { DCSortieKind.AirbaseStrike, new("OffensiveCounterAir", null, null, null) },
@@ -86,6 +86,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
                         Suitable = ObjectivePresetSuitability.GetUnsuitabilityReason(briefingRoom.Database, preset, profile) == ObjectivePresetUnsuitabilityReason.None,
                         DepartureId = departure?.Id,
                         Unavailable = GetUnavailableReason(departure, x.kind.Value),
+                        Threat = GetEnemyAirDefenseLevel(state, x.asset.Center),
                     };
                 })
                 .OrderBy(x => x.Kind)
@@ -158,6 +159,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
             var token = Guid.NewGuid().ToString("N")[..12];
             var reporterLua = File.ReadAllText(REPORTER_LUA);
             GeneratorTools.ReplaceKey(ref reporterLua, "Token", token);
+            GeneratorTools.ReplaceKey(ref reporterLua, "RadarsDown", target.RadarsDown ? "true" : "false");
             GeneratorTools.ReplaceKey(ref reporterLua, "Stock", string.Join(", ", DynamicCampaignInventory.WEAPONS.Select(x =>
                 $"{x} = {Math.Floor(DynamicCampaignInventory.Get(departure.Weapons, x))}")));
             GeneratorTools.ReplaceKey(ref reporterLua, "StockLabels", string.Join(", ", DynamicCampaignInventory.WEAPONS.Select(x =>
@@ -175,6 +177,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 DepartureId = departure?.Id,
                 MissionName = mission.Briefing.Name,
                 GeneratedUtc = DateTime.UtcNow,
+                RadarsDown = target.Kind == DCAssetKind.AirDefense && target.RadarsDown,
             };
             return mission;
         }
@@ -194,7 +197,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 template.OptionsMission.Add("SpawnAnywhere");
 
             // Opposition near the target and overall air power come from the campaign
-            template.SituationEnemyAirDefense = GetAirDefenseLevel(state, state.EnemyCoalition, target.Center);
+            template.SituationEnemyAirDefense = GetEnemyAirDefenseLevel(state, target.Center);
             template.SituationEnemyAirForce = GetAirForceLevel(state, state.EnemyCoalition);
             template.SituationFriendlyAirDefense = GetAirDefenseLevel(state, state.PlayerCoalition, departure?.Coordinates ?? target.Center);
             template.SituationFriendlyAirForce = GetAirForceLevel(state, state.PlayerCoalition);
@@ -204,6 +207,8 @@ namespace BriefingRoom4DCS.DynamicCampaign
             if (definition.Target != null) objective.Target = definition.Target;
             if (definition.Behavior != null) objective.TargetBehavior = definition.Behavior;
             if (definition.Task != null) objective.Task = definition.Task;
+            // Radars already destroyed: the reporter removes them at start, the rest of the site is the target
+            if (kind == DCSortieKind.SEAD && target.RadarsDown) objective.Task = "DestroyAll";
             objective.CoordinateHint_ = target.IsRoute
                 ? Coordinates.Lerp(target.Coordinates, target.Coordinates2, 0.35 + Toolbox.RandomDouble(0.3))
                 : target.Coordinates;
@@ -219,10 +224,10 @@ namespace BriefingRoom4DCS.DynamicCampaign
             _ => Amount.VeryLow
         };
 
-        // Sum of the strength of the SAM sites covering a point
+        // Sum of the strength of the SAM sites covering a point (blind sites cover nothing)
         internal static double GetAirDefenseCover(DynamicCampaignState state, Coalition coalition, Coordinates coordinates) =>
             state.GetAssets(coalition, DCAssetKind.AirDefense)
-                .Where(x => x.IsAlive && x.Coordinates.GetDistanceFrom(coordinates) < DynamicCampaignRules.AIR_DEFENSE_COVER_KM * 1000)
+                .Where(x => x.IsAlive && !x.RadarsDown && x.Coordinates.GetDistanceFrom(coordinates) < DynamicCampaignRules.AIR_DEFENSE_COVER_KM * 1000)
                 .Sum(x => x.Strength / 100);
 
         internal static double GetAirReadiness(DynamicCampaignState state, Coalition coalition)
@@ -231,7 +236,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
             return airbases.Count == 0 ? 0 : airbases.Average(x => x.IsAlive ? x.Strength : 0) / 100;
         }
 
-        private static AmountNR GetAirDefenseLevel(DynamicCampaignState state, Coalition coalition, Coordinates coordinates)
+        internal static AmountNR GetAirDefenseLevel(DynamicCampaignState state, Coalition coalition, Coordinates coordinates)
         {
             var cover = GetAirDefenseCover(state, coalition, coordinates);
             var overall = state.GetAssets(coalition, DCAssetKind.AirDefense).Count(x => x.IsAlive);
@@ -243,6 +248,17 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 < 2.2 => AmountNR.High,
                 _ => AmountNR.VeryHigh
             };
+        }
+
+        // Enemy air defenses around a target, no more than the player's flight can face
+        internal static AmountNR GetEnemyAirDefenseLevel(DynamicCampaignState state, Coordinates coordinates)
+        {
+            var level = GetAirDefenseLevel(state, state.EnemyCoalition, coordinates);
+            var flightSize = state.PlayerAircraft.Values.Sum();
+            var maxLevel = flightSize <= DynamicCampaignRules.SMALL_FLIGHT ? AmountNR.Average
+                : flightSize <= DynamicCampaignRules.MEDIUM_FLIGHT ? AmountNR.High
+                : AmountNR.VeryHigh;
+            return level > maxLevel ? maxLevel : level;
         }
 
         // Fighters actually available (fleet x readiness, with missiles), relative to the initial fleet
@@ -303,6 +319,8 @@ namespace BriefingRoom4DCS.DynamicCampaign
             };
             if (targetWaypoint != null)
                 remarks.Add(briefingRoom.Translate("DCBriefingTargetWaypoint", targetWaypoint));
+            if (kind == DCSortieKind.SEAD && target.RadarsDown)
+                remarks.Add(briefingRoom.Translate("DCBriefingRadarsDown", target.RadarRepairTurns));
             remarks.Add(briefingRoom.Translate("DCBriefingStock", departure.Name, DynamicCampaignInventory.Describe(departure, briefingRoom.Translate)));
             remarks.Reverse();
             foreach (var remark in remarks)

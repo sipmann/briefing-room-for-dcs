@@ -63,9 +63,14 @@ namespace BriefingRoom4DCS.DynamicCampaign
         {
             var target = state.GetAsset(pending.TargetId);
             var objective = result.Objectives.FirstOrDefault();
-            if (target != null && objective != null && objective.Total > 0)
+            double objectivePercent = 0;
+            if (target != null && objective != null && (objective.Total > 0 || objective.SiteTotal > 0))
             {
-                var fraction = Math.Clamp(objective.Dead / (double)objective.Total, 0, 1);
+                var fraction = objective.Total > 0 ? Math.Clamp(objective.Dead / (double)objective.Total, 0, 1) : 0;
+                // SAM site: every unit counts the same (launchers too), radars also blind it
+                if (target.Kind == DCAssetKind.AirDefense && objective.SiteTotal > 0)
+                    fraction = Math.Clamp(objective.SiteDead / (double)objective.SiteTotal, 0, 1);
+                objectivePercent = Math.Round(fraction * 100);
                 report.Events.Add(new DCEvent("DCEventMissionResult", state.PlayerCoalition, Ref(target), Percent(fraction)));
                 switch (target.Kind)
                 {
@@ -75,10 +80,10 @@ namespace BriefingRoom4DCS.DynamicCampaign
                         if (fraction >= 0.5 || objective.Complete) CutRoute(target, report);
                         break;
                     case DCAssetKind.AirDefense:
-                        // Radars down = site out of action until repaired, even if launchers survive
                         Damage(state, target, fraction * target.Strength, report);
-                        if (objective.Complete && target.IsAlive)
-                            target.Strength = Math.Min(target.Strength, 25);
+                        // Objective units are its radars, unless it was spawned without them
+                        if (!pending.RadarsDown && objective.Dead > 0)
+                            SetRadarsDown(target, report);
                         break;
                     case DCAssetKind.Airbase:
                         DestroyParkedAircraft(target, objective.Dead, report);
@@ -96,6 +101,19 @@ namespace BriefingRoom4DCS.DynamicCampaign
             }
             else
                 report.Events.Add(new DCEvent("DCEventMissionNoTargets", state.PlayerCoalition));
+            if (target != null)
+                ApplyAirDefenseKills(state, target, result, report);
+
+            report.Debrief = new DCDebrief
+            {
+                MissionName = pending.MissionName,
+                Kind = pending.Kind,
+                TargetId = pending.TargetId,
+                ObjectivePercent = objectivePercent,
+                MissionTime = result.MissionTime,
+                Pilots = result.Pilots,
+                Events = result.Events,
+            };
 
             var departure = state.GetAsset(pending.DepartureId);
             if (departure != null && result.WeaponsUsed.Count > 0)
@@ -118,6 +136,36 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 }
                 report.Events.Add(new DCEvent("DCEventPlayerLosses", state.PlayerCoalition, result.PlayerAircraftLost));
             }
+        }
+
+        // Ambient SAM units are the cover of the campaign SAM sites around the target (see
+        // DynamicCampaignMissionMaker.GetAirDefenseLevel): each loss hurts the nearest of them
+        private static void ApplyAirDefenseKills(DynamicCampaignState state, DCAsset target, DCMissionResult result, DCTurnReport report)
+        {
+            if (result.AirDefenseKills.Count == 0) return;
+            var sites = state.GetAssets(state.EnemyCoalition, DCAssetKind.AirDefense)
+                .Where(x => x.IsAlive && x.Coordinates.GetDistanceFrom(target.Center) < DynamicCampaignRules.AIR_DEFENSE_COVER_KM * 1000)
+                .ToList();
+            // The target site has its own result: the other sites first
+            var candidates = sites.Where(x => x != target).ToList();
+            if (candidates.Count == 0) candidates = sites;
+            if (candidates.Count == 0) return;
+
+            foreach (var kills in result.AirDefenseKills.GroupBy(kill => candidates.MinBy(x => x.Coordinates.GetDistanceFrom(new Coordinates(kill.X, kill.Y)))))
+            {
+                var site = kills.Key;
+                report.Events.Add(new DCEvent("DCEventAirDefenseUnitsDestroyed", state.PlayerCoalition, Ref(site), kills.Count()));
+                Damage(state, site, kills.Count() * DynamicCampaignRules.AIR_DEFENSE_UNIT_KILL_DAMAGE, report);
+                if (kills.Any(x => x.Radar))
+                    SetRadarsDown(site, report);
+            }
+        }
+
+        private static void SetRadarsDown(DCAsset site, DCTurnReport report)
+        {
+            if (!site.IsAlive) return;
+            site.RadarRepairTurns = Math.Max(site.RadarRepairTurns, DynamicCampaignRules.AIR_DEFENSE_RADAR_REPAIR_TURNS);
+            report.Events.Add(new DCEvent("DCEventRadarsDown", site.Coalition, Ref(site)));
         }
 
         // ---------------------------------------------------------------- Logistics
@@ -219,6 +267,14 @@ namespace BriefingRoom4DCS.DynamicCampaign
                     site.Strength = Math.Min(100, site.Strength + DynamicCampaignRules.AIR_DEFENSE_REPAIR);
             }
 
+            // Destroyed radars are replaced after a few turns, if the depot sends the parts
+            foreach (var site in assets.Where(x => x.Kind == DCAssetKind.AirDefense && x.IsAlive && x.RadarsDown))
+            {
+                if (Take(state.GetAsset(site.SupplierId), DynamicCampaignRules.AIR_DEFENSE_RADAR_REPAIR_COST) < DynamicCampaignRules.AIR_DEFENSE_RADAR_REPAIR_COST) continue;
+                site.RadarRepairTurns--;
+                if (!site.RadarsDown) report.Events.Add(new DCEvent("DCEventRadarsRepaired", coalition, Ref(site)));
+            }
+
             // Fixed installations slowly repair themselves
             foreach (var structure in assets.Where(x => (x.Kind == DCAssetKind.Depot || x.Kind == DCAssetKind.Factory) && x.IsAlive))
                 structure.Strength = Math.Min(100, structure.Strength + DynamicCampaignRules.STRUCTURE_REPAIR);
@@ -267,6 +323,7 @@ namespace BriefingRoom4DCS.DynamicCampaign
                 if (depot.Stock < DynamicCampaignRules.AIR_DEFENSE_REBUILD_COST || rng.NextDouble() > 0.4) continue;
                 depot.Stock -= DynamicCampaignRules.AIR_DEFENSE_REBUILD_COST;
                 site.Strength = 50;
+                site.RadarRepairTurns = 0;
                 site.SupplierId = depot.Id;
                 report.Events.Add(new DCEvent("DCEventAirDefenseRebuilt", coalition, Ref(site)));
             }

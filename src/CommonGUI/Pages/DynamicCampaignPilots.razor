@@ -1,0 +1,154 @@
+@page "/DynamicCampaign/Pilots"
+@page "/DynamicCampaign/Pilots/{PilotName}"
+@inject BriefingRoom4DCS.IBriefingRoom briefingRoom
+@using BriefingRoom4DCS.DynamicCampaign
+@using System.Globalization
+@using System.Linq
+
+<div class="title-bar">
+    <h1>@briefingRoom.Translate("DCPilots")</h1>
+</div>
+<div class="generator-group">
+    <div class="generator-form">
+        <AlertMessages errorMessage="@errorMessage" />
+        @if (pilot == null)
+        {
+            <div class="generator-block">
+                <p>@briefingRoom.Translate("DCPilotsHelp")</p>
+                @if (!string.IsNullOrEmpty(PilotName) || pilots.Count == 0)
+                {
+                    <p>@briefingRoom.Translate("DCNoPilots")</p>
+                }
+                @if (pilots.Count > 0)
+                {
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>@briefingRoom.Translate("DCPilot")</th>
+                                <th>@briefingRoom.Translate("DCMissions")</th>
+                                <th>@briefingRoom.Translate("DCFlightTime")</th>
+                                <th>@briefingRoom.Translate("DCKills")</th>
+                                <th>@briefingRoom.Translate("DCAccuracy")</th>
+                                <th>@briefingRoom.Translate("DCAircraftLost")</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var record in pilots)
+                        {
+                            <tr>
+                                <td><a href="DynamicCampaign/Pilots/@Uri.EscapeDataString(record.Name)"><strong>@record.Name</strong></a></td>
+                                <td>@record.Missions</td>
+                                <td>@DynamicCampaignText.Duration(record.FlightTime)</td>
+                                <td>@record.Kills.Total()</td>
+                                <td>@DynamicCampaignText.Accuracy(record.Hits, record.Shots)</td>
+                                <td>@record.AircraftLost</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="generator-block">
+                <a class="btn btn-secondary btn-sm float-right" href="DynamicCampaign/Pilots"><span class="oi oi-arrow-left"></span> @briefingRoom.Translate("DCAllPilots")</a>
+                <h3>@pilot.Name</h3>
+                <p>@string.Join(" · ", pilot.Aircraft.OrderByDescending(x => x.Value).Select(x => $"{x.Key} ({x.Value})"))</p>
+            </div>
+            <div class="generator-group flex-justify-spaced">
+                <div class="generator-block flex-block">
+                    <h4>@briefingRoom.Translate("DCCareer")</h4>
+                    <table class="table table-sm">
+                        <tbody>
+                            <tr><td>@briefingRoom.Translate("DCMissions")</td><td>@pilot.Missions</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCFlightTime")</td><td>@DynamicCampaignText.Duration(pilot.FlightTime)</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCTakeoffs")</td><td>@pilot.Takeoffs</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCLandings")</td><td>@pilot.Landings</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCShots")</td><td>@pilot.Shots</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCHits")</td><td>@pilot.Hits</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCAccuracy")</td><td>@DynamicCampaignText.Accuracy(pilot.Hits, pilot.Shots)</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCHitsTaken")</td><td>@pilot.HitsTaken</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCEjections")</td><td>@pilot.Ejections</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCDeaths")</td><td>@pilot.Deaths</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCAircraftLost")</td><td>@pilot.AircraftLost</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="generator-block flex-block">
+                    <h4>@briefingRoom.Translate("DCKills")</h4>
+                    <table class="table table-sm">
+                        <tbody>
+                            <tr><td>@briefingRoom.Translate("DCKillsAir")</td><td>@pilot.Kills.Air</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCKillsHelicopter")</td><td>@pilot.Kills.Helicopter</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCKillsGround")</td><td>@pilot.Kills.Ground</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCKillsAirDefense")</td><td>@pilot.Kills.AirDefense</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCKillsShip")</td><td>@pilot.Kills.Ship</td></tr>
+                            <tr><td>@briefingRoom.Translate("DCKillsStructure")</td><td>@pilot.Kills.Structure</td></tr>
+                            <tr><td><strong>@briefingRoom.Translate("DCKills")</strong></td><td><strong>@pilot.Kills.Total()</strong></td></tr>
+                            <tr class="text-danger"><td>@briefingRoom.Translate("DCFriendlyKills")</td><td>@pilot.FriendlyKills</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            @if (pilot.Weapons.Count > 0)
+            {
+                <div class="generator-block">
+                    <h4>@briefingRoom.Translate("DCWeapon")</h4>
+                    <WeaponsTable Weapons="pilot.Weapons" />
+                </div>
+            }
+            <div class="generator-block">
+                <h4>@briefingRoom.Translate("DCMissionHistory")</h4>
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>@briefingRoom.Translate("DCCampaign")</th>
+                            <th>@briefingRoom.Translate("DCMission")</th>
+                            <th>@briefingRoom.Translate("DCAircraft")</th>
+                            <th>@briefingRoom.Translate("DCResult")</th>
+                            <th>@briefingRoom.Translate("DCKills")</th>
+                            <th>@briefingRoom.Translate("DCStatus")</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var mission in pilot.History)
+                    {
+                        <tr>
+                            <td>@mission.CampaignName<br/><small class="text-muted">@briefingRoom.Translate("DCTurn") @mission.Turn &middot; @mission.Date.ToString("d", CultureInfo.CurrentCulture)</small></td>
+                            <td>@mission.MissionName<br/><small class="text-muted">@DynamicCampaignText.SortieKind(briefingRoom, mission.Kind)</small></td>
+                            <td>@mission.Aircraft<br/><small class="text-muted">@DynamicCampaignText.Duration(mission.FlightTime)</small></td>
+                            <td>@DynamicCampaignText.Percent(mission.ObjectivePercent)</td>
+                            <td>@mission.Kills</td>
+                            <td>@DynamicCampaignText.PilotStatus(briefingRoom, mission.Status)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string PilotName { get; set; }
+    private readonly DynamicCampaignStore store = new();
+    private List<DCPilotRecord> pilots = new();
+    private DCPilotRecord pilot;
+    private string errorMessage;
+
+    protected override void OnParametersSet()
+    {
+        try
+        {
+            errorMessage = "";
+            pilots = DynamicCampaignService.GetPilots(store.List());
+            pilot = string.IsNullOrEmpty(PilotName) ? null : pilots.FirstOrDefault(x => x.Name == PilotName);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+            errorMessage = ex.Message;
+        }
+    }
+}

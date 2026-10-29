@@ -1,0 +1,31 @@
+@inject BriefingRoom4DCS.IBriefingRoom briefingRoom
+@using BriefingRoom4DCS.DynamicCampaign
+
+@* Shots, hits and kills by weapon (dynamic campaign debrief and pilot career) *@
+<table class="table table-sm table-borderless small mb-0">
+    <thead>
+        <tr>
+            <th>@briefingRoom.Translate("DCWeapon")</th>
+            <th>@briefingRoom.Translate("DCShots")</th>
+            <th>@briefingRoom.Translate("DCHits")</th>
+            <th>@briefingRoom.Translate("DCAccuracy")</th>
+            <th>@briefingRoom.Translate("DCKills")</th>
+        </tr>
+    </thead>
+    <tbody>
+    @foreach (var weapon in Weapons)
+    {
+        <tr>
+            <td>@weapon.Name <small class="text-muted">@DynamicCampaignText.WeaponCategory(briefingRoom, weapon.Category)</small></td>
+            <td>@(weapon.Gun ? "-" : weapon.Shots.ToString())</td>
+            <td>@weapon.Hits</td>
+            <td>@(weapon.Gun ? "-" : DynamicCampaignText.Accuracy(Math.Min(weapon.Hits, weapon.Shots), weapon.Shots))</td>
+            <td>@weapon.Kills</td>
+        </tr>
+    }
+    </tbody>
+</table>
+
+@code {
+    [Parameter] public List<DCWeaponDebrief> Weapons { get; set; }
+}
