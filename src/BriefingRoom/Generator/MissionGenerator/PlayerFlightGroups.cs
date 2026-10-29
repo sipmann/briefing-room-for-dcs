@@ -31,6 +31,7 @@ namespace BriefingRoom4DCS.Generator.Mission
 {
     internal class PlayerFlightGroups
     {
+        internal static readonly HashSet<string> NO_TAKEOFF_STEERPOINT_AIRCRAFT = new() { "F-16C_50" };
 
         internal static void GeneratePlayerFlightGroup(
             IBriefingRoom briefingRoom,
@@ -80,6 +81,12 @@ namespace BriefingRoom4DCS.Generator.Mission
             // Not an unit, or not a player-controllable unit, abort.
             if ((unitDB == null) || !unitDB.PlayerControllable)
                 throw new BriefingRoomException(briefingRoom.Database, mission.LangKey, "PlayerFlightNotFound", flightGroup.Aircraft);
+
+            // These aircraft drop the takeoff waypoint (WP0) from their steerpoints: the route
+            // gets one over the departure airbase, so there is a steerpoint back to it and the
+            // steerpoint numbers match the kneeboard ones.
+            if (NO_TAKEOFF_STEERPOINT_AIRCRAFT.Contains(unitDB.DCSID) && flightGroup.StartLocation != PlayerStartLocation.Air && string.IsNullOrEmpty(flightGroup.Carrier) && !flightGroup.Hostile)
+                flightWaypoints.Insert(0, new Waypoint(airbase.UIDisplayName.Get(mission.LangKey).ToUpper(), airbase.Coordinates, scriptIgnore: true));
 
             List<int> parkingSpotIDsList = new();
             List<Coordinates> parkingSpotCoordinatesList = new();
