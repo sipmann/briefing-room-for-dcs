@@ -5,3 +5,19 @@ updates:
     directory: "/src/"
     schedule:
       interval: "weekly"
+
+  # Actions dos workflows: uma vez por semana, um PR só.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: saturday
+      time: "07:00"
+      timezone: America/Cuiaba
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: actions
+    groups:
+      actions:
+        patterns: ["*"]
